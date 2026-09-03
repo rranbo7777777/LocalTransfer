@@ -1,0 +1,175 @@
+﻿<Window x:Class="LocalTransfer.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="局域传输"
+        Width="1120"
+        Height="720"
+        MinWidth="920"
+        MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="#F4F6FA">
+    <Window.Resources>
+        <Style x:Key="SidebarButton" TargetType="Button">
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Margin" Value="12,3" />
+            <Setter Property="Padding" Value="16,0" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Foreground" Value="#DCE4F5" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="#356AE6" />
+            <Setter Property="BorderBrush" Value="#356AE6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#CFD6E4" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="#17233C">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Top" Margin="0,24,0,0">
+                    <TextBlock Margin="24,0,0,24" Foreground="White" FontSize="21"
+                               FontWeight="SemiBold" Text="局域传输" />
+                    <Button Style="{StaticResource SidebarButton}" Background="#273B63" Content="发送文件" />
+                    <Button Style="{StaticResource SidebarButton}" Content="设备" />
+                    <Button Style="{StaticResource SidebarButton}" Content="传输任务" />
+                    <Button Style="{StaticResource SidebarButton}" Content="历史记录" />
+                    <Button Style="{StaticResource SidebarButton}" Content="设置" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="24,0,24,22">
+                    <TextBlock Foreground="#8FA0BE" FontSize="12" Text="协议版本 1" />
+                    <TextBlock Margin="0,5,0,0" Foreground="#8FA0BE" FontSize="12" Text="内部开发版本" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="34,28">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock FontSize="26" FontWeight="SemiBold" Foreground="#17233C" Text="发送文件" />
+                    <TextBlock Margin="0,7,0,0" Foreground="#69758C"
+                               Text="选择可信设备，再拖入或选择要发送的文件。" />
+                </StackPanel>
+                <Border Grid.Column="1" Padding="12,7" Background="#FFF5DC" CornerRadius="16">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Margin="0,0,7,0" Fill="#E9A11B" />
+                        <TextBlock x:Name="ServiceStatusText" VerticalAlignment="Center"
+                                   Foreground="#8A610E" Text="协调服务启动中" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Grid.Row="1" Margin="0,25,0,0" Padding="18" Background="White"
+                    BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="300" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="目标设备" />
+                    <ComboBox x:Name="DeviceComboBox" Grid.Column="1" Margin="16,0,0,0" Height="36"
+                              ItemsSource="{Binding TrustedDevices}" DisplayMemberPath="DisplayName"
+                              SelectionChanged="OnDeviceSelectionChanged" />
+                    <TextBlock Grid.Column="2" Margin="18,0,0,0" VerticalAlignment="Center"
+                               Foreground="#7A8598" Text="完成安全配对后才能开始传输" />
+                    <Button Grid.Column="3" Margin="14,0,0,0" Click="OnCreatePairingClicked"
+                            Style="{StaticResource SecondaryButton}" Content="创建配对信息" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="2" Margin="0,18,0,0" Padding="24" AllowDrop="True"
+                    Background="#F9FBFF" BorderBrush="#9CB3E8" BorderThickness="1" CornerRadius="8"
+                    DragOver="OnFilesDragOver" Drop="OnFilesDropped">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock HorizontalAlignment="Center" Foreground="#356AE6" FontSize="34"
+                               FontWeight="Light" Text="＋" />
+                    <TextBlock Margin="0,4,0,0" HorizontalAlignment="Center" FontSize="16"
+                               FontWeight="SemiBold" Text="拖放文件到这里" />
+                    <TextBlock Margin="0,6,0,12" HorizontalAlignment="Center" Foreground="#7A8598"
+                               Text="支持多选；不会读取文件内容，直到你确认发送" />
+                    <Button Click="OnChooseFilesClicked" Style="{StaticResource SecondaryButton}" Content="选择文件" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="3" Margin="0,18,0,0" Padding="18" Background="White"
+                    BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel>
+                        <TextBlock FontSize="15" FontWeight="SemiBold" Text="待发送文件" />
+                        <Button DockPanel.Dock="Right" Padding="10,3" Click="OnClearFilesClicked"
+                                Background="Transparent" BorderThickness="0" Foreground="#67748A" Content="清空" />
+                    </DockPanel>
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <TextBlock x:Name="EmptyQueueText" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" Foreground="#9AA4B6" Text="尚未选择文件" />
+                        <ListBox ItemsSource="{Binding PendingFiles}" BorderThickness="0" Background="Transparent">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                       Text="{Binding DirectoryName}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
+                                                   Foreground="#647087" Text="{Binding SizeText}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="4" Margin="0,18,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="QueueSummaryText" VerticalAlignment="Center"
+                           Foreground="#69758C" Text="0 个文件" />
+                <Button x:Name="SendButton" Grid.Column="1" Width="130" IsEnabled="False"
+                        Click="OnSendClicked" Style="{StaticResource PrimaryButton}" Content="发送" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

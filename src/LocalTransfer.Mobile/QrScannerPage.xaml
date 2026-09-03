@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:zxing="clr-namespace:ZXing.Net.Maui.Controls;assembly=ZXing.Net.MAUI.Controls"
+             x:Class="LocalTransfer.Mobile.QrScannerPage"
+             Title="扫描电脑配对码"
+             BackgroundColor="Black">
+    <Grid RowDefinitions="*,Auto">
+        <zxing:CameraBarcodeReaderView x:Name="CameraView" BarcodesDetected="OnBarcodesDetected" />
+        <Border Margin="28" Padding="16" VerticalOptions="Center" HorizontalOptions="Fill"
+                Stroke="White" StrokeThickness="2" BackgroundColor="#20000000">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="12" />
+            </Border.StrokeShape>
+            <Grid HeightRequest="250" />
+        </Border>
+        <VerticalStackLayout Grid.Row="1" Padding="20" Spacing="12" BackgroundColor="#CC111827">
+            <Label HorizontalTextAlignment="Center" TextColor="White"
+                   Text="将电脑显示的二维码放入取景框" />
+            <Button Clicked="OnCancelClicked" BackgroundColor="White" TextColor="#17233C" Text="取消" />
+        </VerticalStackLayout>
+    </Grid>
+</ContentPage>

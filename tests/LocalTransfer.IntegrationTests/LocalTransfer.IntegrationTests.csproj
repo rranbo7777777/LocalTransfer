@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Compile Include="..\TestProgram.cs" Link="TestProgram.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LocalTransfer.Client\LocalTransfer.Client.csproj" />
+    <ProjectReference Include="..\..\src\LocalTransfer.Coordinator\LocalTransfer.Coordinator.csproj" />
+    <ProjectReference Include="..\..\src\LocalTransfer.Contracts\LocalTransfer.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\LocalTransfer.Core\LocalTransfer.Core.csproj" />
+    <ProjectReference Include="..\..\src\LocalTransfer.Infrastructure\LocalTransfer.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

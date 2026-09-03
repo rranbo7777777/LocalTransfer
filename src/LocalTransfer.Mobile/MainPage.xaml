@@ -1,0 +1,98 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="LocalTransfer.Mobile.MainPage"
+             Title="发送"
+             BackgroundColor="#F4F6FA">
+    <ScrollView>
+        <VerticalStackLayout Padding="22,20,22,32" Spacing="18">
+            <Grid ColumnDefinitions="*,Auto">
+                <VerticalStackLayout Spacing="3">
+                    <Label FontSize="26" FontAttributes="Bold" TextColor="#17233C" Text="局域传输" />
+                    <Label FontSize="13" TextColor="#69758C" Text="文件只在当前局域网内传输" />
+                </VerticalStackLayout>
+                <Border Grid.Column="1" Padding="10,6" BackgroundColor="#FFF5DC" StrokeThickness="0">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="16" />
+                    </Border.StrokeShape>
+                    <Label x:Name="ConnectionStatusLabel" FontSize="12" TextColor="#8A610E" Text="未连接" />
+                </Border>
+            </Grid>
+
+            <Border Padding="18" BackgroundColor="White" Stroke="#E1E5ED" StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="10">
+                    <Label FontSize="14" FontAttributes="Bold" TextColor="#17233C" Text="目标电脑" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <VerticalStackLayout Spacing="2">
+                            <Label x:Name="ComputerNameLabel" TextColor="#3B465A" Text="尚未配对电脑" />
+                            <Label x:Name="ComputerDetailLabel" FontSize="12" TextColor="#8A94A6"
+                                   Text="先在电脑创建配对二维码，再用手机扫描" />
+                        </VerticalStackLayout>
+                        <Button x:Name="PairButton" Grid.Column="1" Clicked="OnPairClicked" Text="配对" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Padding="24" BackgroundColor="#F9FBFF" Stroke="#9CB3E8" StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="10" HorizontalOptions="Center">
+                    <Label HorizontalTextAlignment="Center" FontSize="34" TextColor="#356AE6" Text="＋" />
+                    <Label HorizontalTextAlignment="Center" FontSize="17" FontAttributes="Bold"
+                           TextColor="#17233C" Text="选择要发送的文件" />
+                    <Label HorizontalTextAlignment="Center" FontSize="12" TextColor="#7A8598"
+                           Text="支持多选；也可从微信或 QQ 先保存后选择" />
+                    <Button Margin="0,5,0,0" Padding="24,12" BackgroundColor="#356AE6"
+                            TextColor="White" Text="选择文件" Clicked="OnChooseFilesClicked" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Padding="18" BackgroundColor="White" Stroke="#E1E5ED" StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="12">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label FontSize="15" FontAttributes="Bold" TextColor="#17233C" Text="待发送文件" />
+                        <Label x:Name="SelectedFilesSummary" Grid.Column="1" FontSize="12"
+                               TextColor="#69758C" Text="0 个文件" />
+                    </Grid>
+                    <Label x:Name="EmptySelectionLabel" Margin="0,18" HorizontalTextAlignment="Center"
+                           TextColor="#9AA4B6" Text="尚未选择文件" />
+                    <CollectionView x:Name="SelectedFilesView" IsVisible="False" SelectionMode="None">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="0,8" ColumnDefinitions="*,Auto">
+                                    <VerticalStackLayout Spacing="2">
+                                        <Label LineBreakMode="TailTruncation" FontAttributes="Bold"
+                                               TextColor="#303A4D" Text="{Binding FileName}" />
+                                        <Label FontSize="11" TextColor="#8A94A6" Text="{Binding ContentType}" />
+                                    </VerticalStackLayout>
+                                    <Label Grid.Column="1" Margin="15,0,0,0" VerticalTextAlignment="Center"
+                                           FontSize="12" TextColor="#647087" Text="{Binding SizeText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+            </Border>
+
+            <Button x:Name="SendButton" HeightRequest="48" IsEnabled="False" Clicked="OnSendClicked"
+                    BackgroundColor="#356AE6" TextColor="White" FontAttributes="Bold" Text="连接电脑后发送" />
+
+            <Button x:Name="ReceiveButton" HeightRequest="48" IsEnabled="False" Clicked="OnReceiveClicked"
+                    BackgroundColor="White" BorderColor="#9CB3E8" TextColor="#356AE6"
+                    FontAttributes="Bold" Text="接收电脑文件" />
+
+            <Label x:Name="TransferStatusLabel" IsVisible="False" HorizontalTextAlignment="Center"
+                   FontSize="12" TextColor="#4F5E76" Text="正在准备…" />
+
+            <Label HorizontalTextAlignment="Center" FontSize="11" TextColor="#8A94A6"
+                   Text="协议版本 1 · 当前为内部开发版本" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
