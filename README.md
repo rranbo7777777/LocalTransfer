@@ -74,4 +74,8 @@ java -jar "$BT/lib/apksigner.jar" sign \
 - 尚未执行需求基线中的 10 GB 单文件、100 文件批量和断网恢复真机验收。
 - MAUI 8 已结束官方支持；这是遵循本次指定的 .NET 8 回退目标，后续应单独评估升级。
 
+## iOS 打包
+
+iOS 的原生链接与 .app 组装要求 `IsMacEnabled=true`（即真实的 Mac 环境），Windows 本机只能编译托管程序集、无法产出 ipa。仓库提供 GitHub Actions 工作流 `.github/workflows/ios-package.yml`（macOS runner、手动触发），产出未签名 ipa，再用 Sideloadly/AltStore 以个人 Apple ID 签名安装。本机需临时把 Mobile 项目切到 `net9.0-ios`（本机只装有 .NET 9 iOS 目标包），工作流中已包含同样处理。
+
 协议和后续计划见 [协议说明](docs/protocol-v1.md) 与 [实施路线](docs/roadmap.md)。

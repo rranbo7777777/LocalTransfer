@@ -1,0 +1,42 @@
+name: iOS打包
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: 安装 MAUI iOS 工作负载
+        run: |
+          dotnet workload install maui-ios || dotnet workload install maui
+          dotnet workload list
+          xcodebuild -version
+
+      - name: 切换到 net9.0-ios 目标框架
+        run: >
+          sed -i '' 's|<TargetFrameworks>net8.0-android;net8.0-ios</TargetFrameworks>|<TargetFrameworks>net9.0-ios</TargetFrameworks>|'
+          src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj
+
+      - name: 编译未签名 ipa
+        run: >
+          dotnet publish src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj
+          -f net9.0-ios -c Release
+          -p:RuntimeIdentifier=ios-arm64
+          -p:EnableCodeSigning=false
+          -p:CheckEolWorkloads=false
+
+      - name: 上传 ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalTransfer-ios-unsigned
+          path: src/LocalTransfer.Mobile/bin/Release/net9.0-ios/ios-arm64/publish/*.ipa
+          if-no-files-found: error
