@@ -482,3 +482,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Project: packaged artifacts and signing secrets
+/dist/
+/signing/

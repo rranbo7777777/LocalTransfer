@@ -45,6 +45,25 @@ dotnet test tests/LocalTransfer.IntegrationTests/LocalTransfer.IntegrationTests.
 
 Android 原生工具在含中文的工作区路径下无法稳定读取中间资源，因此 `Directory.Build.props` 只把 MAUI 项目的 `obj` 重定向到系统临时目录中的纯英文路径；源码和最终 APK 仍在工作区内。
 
+### 发布 Release APK
+
+发布命令需用单数 `RuntimeIdentifier`（复数会触发引用项目的 MSB3030），且本机的 MSBuild 签名任务不会真正写入签名，发布后需用 build-tools 手动 zipalign + apksigner 签名（密钥库见 `signing/`，密码见 `signing/keystore-info.txt`）：
+
+```bash
+dotnet publish src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj -f net8.0-android -c Release \
+  -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="signing/localtransfer.keystore" \
+  -p:AndroidSigningKeyAlias=localtransfer -p:AndroidSigningStorePass=<密码> -p:AndroidSigningKeyPass=<密码> \
+  -p:AndroidPackageFormat=apk -p:RuntimeIdentifier=android-arm64 -p:CheckEolWorkloads=false
+
+BT="C:/Program Files (x86)/Android/android-sdk/build-tools/35.0.0"
+P=src/LocalTransfer.Mobile/bin/Release/net8.0-android/android-arm64/publish
+"$BT/zipalign.exe" -f 4 "$P/com.localtransfer.mobile.apk" "$P/aligned.apk"
+java -jar "$BT/lib/apksigner.jar" sign \
+  --ks signing/localtransfer.keystore --ks-key-alias localtransfer \
+  --ks-pass pass:<密码> --key-pass pass:<密码> \
+  --out dist/局域传输-1.0-arm64.apk "$P/aligned.apk"
+```
+
 ## 当前限制
 
 - 尚未在真实 Android 手机、微信、QQ 或真实局域网中联调；当前仅完成代码、APK 构建和本机 HTTPS 仿真验证。
