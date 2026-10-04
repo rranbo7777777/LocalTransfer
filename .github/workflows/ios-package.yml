@@ -3,6 +3,9 @@ name: iOS打包
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-ios:
     runs-on: macos-15

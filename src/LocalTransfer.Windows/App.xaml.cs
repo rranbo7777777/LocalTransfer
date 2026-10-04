@@ -38,12 +38,20 @@ public partial class App : System.Windows.Application
         }
     }
 
-    protected override void OnExit(ExitEventArgs e)
+    protected override async void OnExit(ExitEventArgs e)
     {
         _trayIcon?.Dispose();
         if (_coordinator is not null)
         {
-            _coordinator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            try
+            {
+                // Async disposal: a blocking wait here would freeze (or deadlock) the dispatcher.
+                await _coordinator.DisposeAsync();
+            }
+            catch
+            {
+                // Best-effort teardown; the process is exiting regardless.
+            }
         }
 
         base.OnExit(e);
@@ -63,8 +71,10 @@ public partial class App : System.Windows.Application
         _trayIcon = new System.Windows.Forms.NotifyIcon
         {
             Text = "局域传输",
-            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!)
-                   ?? System.Drawing.SystemIcons.Application,
+            Icon = Environment.ProcessPath is { } processPath
+                ? System.Drawing.Icon.ExtractAssociatedIcon(processPath)
+                   ?? System.Drawing.SystemIcons.Application
+                : System.Drawing.SystemIcons.Application,
             ContextMenuStrip = menu,
             Visible = true
         };

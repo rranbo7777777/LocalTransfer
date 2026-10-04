@@ -23,7 +23,19 @@ public partial class PairingWindow : Window
 
     private void OnCopyClicked(object sender, RoutedEventArgs e)
     {
-        System.Windows.Clipboard.SetText(_payload);
+        try
+        {
+            System.Windows.Clipboard.SetText(_payload);
+        }
+        catch (Exception exception)
+        {
+            // Clipboard can transiently fail (COMException) when another process holds it open.
+            MessageBox.Show(
+                $"复制失败：{exception.Message}",
+                "局域传输",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
     }
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();

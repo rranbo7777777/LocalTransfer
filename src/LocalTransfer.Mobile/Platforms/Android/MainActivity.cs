@@ -43,6 +43,7 @@ public class MainActivity : MauiAppCompatActivity
 		}
 
 		var uris = GetSharedUris(intent)
+			.Where(uri => uri.Scheme == "content")
 			.GroupBy(uri => uri.ToString(), StringComparer.Ordinal)
 			.Select(group => group.First())
 			.ToArray();
@@ -135,6 +136,14 @@ public class MainActivity : MauiAppCompatActivity
 					length = cursor.GetLong(sizeIndex);
 				}
 			}
+		}
+
+		// The name comes from another app's content provider and is sent verbatim as the
+		// upload file name; strip any path segments before it leaves the device.
+		displayName = Path.GetFileName(displayName?.Replace('\\', '/') ?? string.Empty);
+		if (string.IsNullOrWhiteSpace(displayName) || displayName is "." or "..")
+		{
+			displayName = "共享文件";
 		}
 
 		var contentResolver = ContentResolver

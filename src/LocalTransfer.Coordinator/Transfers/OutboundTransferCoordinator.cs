@@ -111,7 +111,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
             var file = new FileInfo(transfer.SourcePath);
             if (!file.Exists ||
                 file.Length != transfer.Manifest.Length ||
-                file.LastWriteTimeUtc != transfer.Manifest.LastModifiedUtc.UtcDateTime)
+                Math.Abs((file.LastWriteTimeUtc - transfer.Manifest.LastModifiedUtc.UtcDateTime).TotalSeconds) > 2)
             {
                 transfer.Error = "The source file changed after it was queued.";
                 transfer.StateMachine.TransitionTo(TransferState.Failed);
@@ -132,7 +132,11 @@ public sealed class OutboundTransferCoordinator : IDisposable
         }
         catch (Exception exception)
         {
-            transfer.Error ??= exception.Message;
+            // Error strings are served to the paired peer; file I/O exception messages
+            // contain local filesystem paths and must be replaced.
+            transfer.Error ??= exception is IOException or UnauthorizedAccessException
+                ? "A local file error occurred."
+                : exception.Message;
             throw;
         }
         finally

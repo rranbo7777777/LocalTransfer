@@ -21,23 +21,31 @@ public partial class QrScannerPage : ContentPage
 
     public Task<string?> WaitForResultAsync() => _result.Task;
 
+    protected override bool OnBackButtonPressed()
+    {
+        // The OS back gesture pops the modal without hitting Cancel; without this the
+        // awaiting PairAsync would never resume and the page would stay disabled.
+        CompleteAndClose(null);
+        return true;
+    }
+
     private void OnBarcodesDetected(object sender, BarcodeDetectionEventArgs e)
     {
         var value = e.Results.FirstOrDefault()?.Value;
-        if (string.IsNullOrWhiteSpace(value) || Interlocked.Exchange(ref _handled, 1) != 0)
+        if (string.IsNullOrWhiteSpace(value))
         {
             return;
         }
 
-        CameraView.IsDetecting = false;
-        MainThread.BeginInvokeOnMainThread(async () =>
-        {
-            _result.TrySetResult(value);
-            await Navigation.PopModalAsync();
-        });
+        CompleteAndClose(value);
     }
 
-    private async void OnCancelClicked(object sender, EventArgs e)
+    private void OnCancelClicked(object sender, EventArgs e)
+    {
+        CompleteAndClose(null);
+    }
+
+    private void CompleteAndClose(string? value)
     {
         if (Interlocked.Exchange(ref _handled, 1) != 0)
         {
@@ -45,7 +53,20 @@ public partial class QrScannerPage : ContentPage
         }
 
         CameraView.IsDetecting = false;
-        _result.TrySetResult(null);
-        await Navigation.PopModalAsync();
+        _result.TrySetResult(value);
+        MainThread.BeginInvokeOnMainThread(async () =>
+        {
+            try
+            {
+                if (Navigation.ModalStack.Count > 0)
+                {
+                    await Navigation.PopModalAsync();
+                }
+            }
+            catch
+            {
+                // Barcode detection and cancel can race; whichever pops first wins.
+            }
+        });
     }
 }

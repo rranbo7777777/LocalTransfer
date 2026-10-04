@@ -486,3 +486,7 @@ $RECYCLE.BIN/
 # Project: packaged artifacts and signing secrets
 /dist/
 /signing/
+
+# Android/Java keystores must never be committed, even outside /signing/.
+*.keystore
+*.jks

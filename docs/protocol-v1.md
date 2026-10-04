@@ -18,7 +18,7 @@
 - 单层 `fileName`，禁止路径分隔符
 - `length`
 - `lastModifiedUtc`
-- `chunkSize`，当前默认 4 MiB
+- `chunkSize`，当前默认 4 MiB；协议限制 `chunkSize ≤ 4 MiB`、`length ≤ 1 TiB`、分块数 ≤ 262,144，超限清单在提交时被拒绝
 - 整文件 `sha256Hex`
 
 每个分块还携带独立的 `X-Chunk-SHA256`。接收端只有在全部分块和整文件哈希验证成功后才把 `.part` 文件原子移动为最终文件；同名文件自动增加序号，不覆盖已有文件。

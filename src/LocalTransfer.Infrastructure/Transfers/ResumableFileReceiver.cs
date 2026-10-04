@@ -139,7 +139,9 @@ public sealed class ResumableFileReceiver
                     throw new InvalidDataException("Chunk SHA-256 verification failed.");
                 }
 
-                await target.FlushAsync(cancellationToken);
+                // Persist the chunk bytes to disk before the checkpoint records it as complete;
+                // otherwise a power loss can leave the checkpoint ahead of the file contents.
+                target.Flush(flushToDisk: true);
             }
             finally
             {
@@ -188,7 +190,12 @@ public sealed class ResumableFileReceiver
                 actualHash,
                 Convert.FromHexString(session.Manifest.Sha256Hex)))
             {
-                throw new InvalidDataException("File SHA-256 verification failed.");
+                // The completed data does not match the manifest (e.g. a crash left the checkpoint
+                // claiming chunks whose bytes never reached the disk). Reset the transfer so the
+                // next attempt starts a clean download instead of failing forever.
+                File.Delete(session.TemporaryPath);
+                File.Delete(session.CheckpointPath);
+                throw new InvalidDataException("File SHA-256 verification failed; the transfer was reset.");
             }
 
             var finalPath = Path.Combine(session.DestinationDirectory, session.Checkpoint.FinalFileName);
@@ -253,9 +260,24 @@ public sealed class ResumableFileReceiver
             throw new InvalidDataException("The existing checkpoint does not match the transfer manifest.");
         }
 
+        if (checkpoint.CompletedChunks is null || checkpoint.FinalFileName is null)
+        {
+            throw new InvalidDataException("The existing checkpoint is incomplete.");
+        }
+
         if (checkpoint.CompletedChunks.Any(index => index < 0 || index >= manifest.ChunkCount))
         {
             throw new InvalidDataException("The existing checkpoint contains an invalid chunk index.");
+        }
+
+        // The final file name is persisted on disk; re-run it through the sanitizer so a tampered
+        // or corrupted checkpoint cannot move the completed file outside the destination directory.
+        if (!string.Equals(
+                checkpoint.FinalFileName,
+                FileNamePolicy.Sanitize(Path.GetFileName(checkpoint.FinalFileName)),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The existing checkpoint contains an unsafe destination file name.");
         }
     }
 

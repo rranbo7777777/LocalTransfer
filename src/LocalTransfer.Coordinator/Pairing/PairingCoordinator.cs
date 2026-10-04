@@ -42,6 +42,7 @@ public sealed class PairingCoordinator
             throw new InvalidOperationException("A pairing request identifier collision occurred.");
         }
 
+        PruneCompletedRequests();
         var info = request.ToInfo();
         PairingRequested?.Invoke(this, info);
         return new PairingSubmissionResponse(request.RequestId, info.Status);
@@ -105,7 +106,10 @@ public sealed class PairingCoordinator
 
         lock (request.Gate)
         {
-            if (request.Status != PairingRequestStatus.Pending)
+            // ApprovalInProgress must block Reject: otherwise a rejection landing inside the
+            // approval's disk-write window would be overwritten by ApproveAsync, and the
+            // rejected peer would still receive a credential on its next poll.
+            if (request.Status != PairingRequestStatus.Pending || request.ApprovalInProgress)
             {
                 return false;
             }
@@ -148,6 +152,20 @@ public sealed class PairingCoordinator
             device.ProtocolVersion > ProtocolConstants.CurrentVersion)
         {
             throw new NotSupportedException("The device protocol version is not supported.");
+        }
+    }
+
+    private void PruneCompletedRequests()
+    {
+        foreach (var pair in _requests)
+        {
+            // Only CredentialDelivered is safe to drop: its client has already received the
+            // credential. Rejected entries must stay so the client's poll sees the rejection
+            // instead of a 404; Approved entries are still waiting to be polled.
+            if (pair.Value.Status == PairingRequestStatus.CredentialDelivered)
+            {
+                _requests.TryRemove(pair.Key, out _);
+            }
         }
     }
 

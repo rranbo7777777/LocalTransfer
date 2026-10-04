@@ -11,6 +11,7 @@ public partial class MainPage : ContentPage
 	private readonly List<SharedSourceFile> _selectedFiles = [];
 	private CoordinatorConnection? _connection;
 	private LocalTransferClient? _client;
+	private bool _connectionLoadStarted;
 
 	public MainPage()
 	{
@@ -22,15 +23,18 @@ public partial class MainPage : ContentPage
 	{
 		base.OnAppearing();
 		ConsumeSharedFiles();
-		if (_connection is not null)
+		// OnAppearing fires again when modals close; without this guard a slow SecureStorage
+		// load can complete after a fresh pairing and overwrite the new connection with stale data.
+		if (_connection is not null || _connectionLoadStarted)
 		{
 			return;
 		}
 
+		_connectionLoadStarted = true;
 		try
 		{
 			var connection = await MobileConnectionStore.LoadAsync();
-			if (connection is not null)
+			if (connection is not null && _connection is null)
 			{
 				SetConnection(connection);
 			}

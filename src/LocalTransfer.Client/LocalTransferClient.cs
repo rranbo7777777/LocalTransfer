@@ -107,7 +107,8 @@ public sealed class LocalTransferClient : IDisposable
             () => new HttpRequestMessage(HttpMethod.Get, "/api/v1/outbound"),
             cancellationToken);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<RemoteOutboundTransferInfo[]>(
+        return await BoundedJsonReader.ReadAsync<RemoteOutboundTransferInfo[]>(
+                   response.Content,
                    SerializerOptions,
                    cancellationToken)
                ?? [];
@@ -194,7 +195,8 @@ public sealed class LocalTransferClient : IDisposable
                 () => new HttpRequestMessage(HttpMethod.Get, $"/api/v1/transfers/{transferId}"),
                 cancellationToken);
             response.EnsureSuccessStatusCode();
-            var transfer = await response.Content.ReadFromJsonAsync<RemoteInboundTransferInfo>(
+            var transfer = await BoundedJsonReader.ReadAsync<RemoteInboundTransferInfo>(
+                response.Content,
                 SerializerOptions,
                 cancellationToken)
                 ?? throw new InvalidDataException("The coordinator returned an empty transfer status.");

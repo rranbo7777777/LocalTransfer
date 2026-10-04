@@ -1,3 +1,5 @@
+using LocalTransfer.Contracts.Protocol;
+
 namespace LocalTransfer.Contracts.Transfers;
 
 public sealed record FileManifest(
@@ -29,9 +31,30 @@ public sealed record FileManifest(
             throw new ArgumentOutOfRangeException(nameof(Length));
         }
 
+        if (Length > ProtocolConstants.MaxTransferLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Length), Length, "The declared transfer length exceeds the protocol limit.");
+        }
+
         if (ChunkSize <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(ChunkSize));
+        }
+
+        if (ChunkSize > ProtocolConstants.MaxChunkSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ChunkSize), ChunkSize, "The declared chunk size exceeds the protocol limit.");
+        }
+
+        if (Length > 0)
+        {
+            var chunkCount = (Length + ChunkSize - 1L) / ChunkSize;
+            if (chunkCount > ProtocolConstants.MaxChunkCount)
+            {
+                throw new ArgumentException(
+                    "The declared length and chunk size would exceed the maximum chunk count.",
+                    nameof(Length));
+            }
         }
 
         if (Sha256Hex.Length != 64 || !Sha256Hex.All(char.IsAsciiHexDigit))

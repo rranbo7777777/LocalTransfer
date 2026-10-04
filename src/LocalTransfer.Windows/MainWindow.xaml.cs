@@ -182,9 +182,7 @@ public partial class MainWindow : Window
 
     private void OnPairingRequested(object? sender, PairingRequestInfo request)
     {
-        _ = Dispatcher.InvokeAsync(
-            () => HandlePairingRequestAsync(request),
-            DispatcherPriority.Normal);
+        DispatchSafe(() => HandlePairingRequestAsync(request));
     }
 
     private async Task HandlePairingRequestAsync(PairingRequestInfo request)
@@ -205,6 +203,27 @@ public partial class MainWindow : Window
         {
             _coordinator.Pairing.Reject(request.RequestId);
         }
+    }
+
+    private void DispatchSafe(Func<Task> operation)
+    {
+        // Dispatcher.InvokeAsync(Func<Task>) does not observe the inner task; catch here so
+        // approval/rejection failures surface to the user instead of vanishing.
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            try
+            {
+                await operation();
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(
+                    $"操作失败：{exception.Message}",
+                    "局域传输",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        });
     }
 
     private void RefreshTrustedDevices()
@@ -231,9 +250,7 @@ public partial class MainWindow : Window
 
     private void OnTransferOffered(object? sender, InboundTransferInfo transfer)
     {
-        _ = Dispatcher.InvokeAsync(
-            () => HandleTransferOfferAsync(transfer),
-            DispatcherPriority.Normal);
+        DispatchSafe(() => HandleTransferOfferAsync(transfer));
     }
 
     private async Task HandleTransferOfferAsync(InboundTransferInfo transfer)

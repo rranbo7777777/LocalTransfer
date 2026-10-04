@@ -22,6 +22,7 @@ public sealed class CoordinatorHost : IAsyncDisposable
 {
     private readonly CoordinatorOptions _options;
     private readonly Func<X509Certificate2> _certificateFactory;
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private WebApplication? _application;
     private X509Certificate2? _certificate;
 
@@ -51,47 +52,65 @@ public sealed class CoordinatorHost : IAsyncDisposable
 
     public string Endpoint => $"https://{FormatHost(GetAdvertisedAddress())}:{_options.Port}";
 
-    public string? CertificateSha256 => _certificate is null
-        ? null
-        : LocalCertificateProvider.GetSha256Fingerprint(_certificate);
+    public string? CertificateSha256
+    {
+        get
+        {
+            var certificate = _certificate;
+            return certificate is null
+                ? null
+                : LocalCertificateProvider.GetSha256Fingerprint(certificate);
+        }
+    }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_application is not null)
-        {
-            return;
-        }
-
-        _certificate = _certificateFactory();
-        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
-        {
-            ApplicationName = typeof(CoordinatorHost).Assembly.FullName
-        });
-        builder.Logging.ClearProviders();
-        builder.WebHost.ConfigureKestrel(serverOptions => ConfigureKestrel(serverOptions, _certificate));
-        builder.Services.ConfigureHttpJsonOptions(options =>
-            options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase);
-
-        var application = builder.Build();
-        MapEndpoints(application);
-
+        await _lifecycleGate.WaitAsync(cancellationToken);
         try
         {
-            await application.StartAsync(cancellationToken);
-            _application = application;
+            if (_application is not null)
+            {
+                return;
+            }
+
+            var certificate = _certificateFactory();
+            _certificate = certificate;
+            var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
+            {
+                ApplicationName = typeof(CoordinatorHost).Assembly.FullName
+            });
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(serverOptions => ConfigureKestrel(serverOptions, certificate));
+            builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase);
+
+            var application = builder.Build();
+            MapEndpoints(application);
+
+            try
+            {
+                await application.StartAsync(cancellationToken);
+                _application = application;
+            }
+            catch
+            {
+                await application.DisposeAsync();
+                certificate.Dispose();
+                _certificate = null;
+                throw;
+            }
         }
-        catch
+        finally
         {
-            await application.DisposeAsync();
-            _certificate.Dispose();
-            _certificate = null;
-            throw;
+            _lifecycleGate.Release();
         }
     }
 
     public PairingBootstrap CreatePairingBootstrap(TimeSpan? lifetime = null)
     {
-        if (_certificate is null)
+        // Snapshot the certificate: StopAsync may null the field concurrently during shutdown.
+        var certificate = _certificate;
+        if (certificate is null)
         {
             throw new InvalidOperationException("The coordinator is not running.");
         }
@@ -99,7 +118,7 @@ public sealed class CoordinatorHost : IAsyncDisposable
         PairingTicket ticket = Pairing.CreateTicket(lifetime ?? TimeSpan.FromMinutes(2));
         return new PairingBootstrap(
             Endpoint,
-            LocalCertificateProvider.GetSha256Fingerprint(_certificate),
+            LocalCertificateProvider.GetSha256Fingerprint(certificate),
             ProtocolConstants.CurrentVersion,
             ticket.Secret,
             ticket.ExpiresAtUtc);
@@ -107,15 +126,23 @@ public sealed class CoordinatorHost : IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        var application = Interlocked.Exchange(ref _application, null);
-        if (application is not null)
+        await _lifecycleGate.WaitAsync(cancellationToken);
+        try
         {
-            await application.StopAsync(cancellationToken);
-            await application.DisposeAsync();
-        }
+            var application = Interlocked.Exchange(ref _application, null);
+            if (application is not null)
+            {
+                await application.StopAsync(cancellationToken);
+                await application.DisposeAsync();
+            }
 
-        _certificate?.Dispose();
-        _certificate = null;
+            _certificate?.Dispose();
+            _certificate = null;
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -243,6 +270,11 @@ public sealed class CoordinatorHost : IAsyncDisposable
             {
                 return Results.BadRequest(new { error = exception.Message });
             }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Exception messages for file I/O contain local filesystem paths that must not reach the peer.
+                return Results.Problem("The chunk could not be stored.");
+            }
         });
 
         application.MapPost("/api/v1/transfers/{transferId:guid}/complete", async (
@@ -274,6 +306,11 @@ public sealed class CoordinatorHost : IAsyncDisposable
             catch (InvalidDataException exception)
             {
                 return Results.BadRequest(new { error = exception.Message });
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Exception messages for file I/O contain local filesystem paths that must not reach the peer.
+                return Results.Problem("The received file could not be finalized.");
             }
         });
 
@@ -348,9 +385,10 @@ public sealed class CoordinatorHost : IAsyncDisposable
             {
                 return Results.Conflict(new { error = exception.Message });
             }
-            catch (IOException exception)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                return Results.Problem(exception.Message);
+                // Exception messages for file I/O contain local filesystem paths that must not reach the peer.
+                return Results.Problem("The source file could not be read.");
             }
         });
 

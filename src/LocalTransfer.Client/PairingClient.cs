@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using LocalTransfer.Contracts.Devices;
 using LocalTransfer.Contracts.Pairing;
 using LocalTransfer.Contracts.Protocol;
@@ -33,8 +34,10 @@ public static class PairingClient
             new PairingSubmission(bootstrap.Secret, device),
             cancellationToken);
         submitResponse.EnsureSuccessStatusCode();
-        var submission = await submitResponse.Content.ReadFromJsonAsync<PairingSubmissionResponse>(
-            cancellationToken: cancellationToken)
+        var submission = await BoundedJsonReader.ReadAsync<PairingSubmissionResponse>(
+            submitResponse.Content,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            cancellationToken)
             ?? throw new InvalidDataException("The coordinator returned an empty pairing response.");
 
         while (DateTimeOffset.UtcNow < bootstrap.ExpiresAtUtc)
@@ -44,8 +47,10 @@ public static class PairingClient
                 $"/api/v1/pairing/{submission.RequestId}",
                 cancellationToken);
             pollResponse.EnsureSuccessStatusCode();
-            var poll = await pollResponse.Content.ReadFromJsonAsync<PairingPollResponse>(
-                cancellationToken: cancellationToken)
+            var poll = await BoundedJsonReader.ReadAsync<PairingPollResponse>(
+                pollResponse.Content,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web),
+                cancellationToken)
                 ?? throw new InvalidDataException("The coordinator returned an empty pairing status.");
 
             if (poll.Status == PairingRequestStatus.Approved)

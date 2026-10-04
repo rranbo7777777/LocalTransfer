@@ -82,7 +82,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            transfer.Error = exception.Message;
+            transfer.Error = DescribeFailure(exception);
             throw;
         }
         finally
@@ -169,7 +169,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            transfer.Error = exception.Message;
+            transfer.Error = DescribeFailure(exception);
             throw;
         }
         finally
@@ -216,7 +216,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                transfer.Error = exception.Message;
+                transfer.Error = DescribeFailure(exception);
                 transfer.StateMachine.TransitionTo(TransferState.Failed);
                 throw;
             }
@@ -281,6 +281,13 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
 
         return transfer;
     }
+
+    // Error strings are serialized into status responses served to the paired peer; file I/O
+    // exception messages contain local filesystem paths and must be replaced.
+    private static string DescribeFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException
+            ? "A local file error occurred."
+            : exception.Message;
 
     private sealed class InboundTransfer(Guid deviceId, FileManifest manifest)
     {

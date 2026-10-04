@@ -35,7 +35,10 @@ public sealed class TrustedDeviceStore
         ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
         Directory.CreateDirectory(dataDirectory);
         _path = Path.Combine(dataDirectory, "trusted-devices.json");
-        _devices = Load(_path).ToDictionary(device => device.DeviceId);
+        _devices = Load(_path)
+            .GroupBy(device => device.DeviceId)
+            .Select(group => group.First())
+            .ToDictionary(device => device.DeviceId);
     }
 
     public IReadOnlyList<TrustedDeviceInfo> GetAll()
@@ -67,10 +70,18 @@ public sealed class TrustedDeviceStore
             return false;
         }
 
-        var actualHash = SHA256.HashData(Encoding.UTF8.GetBytes(credential));
-        return CryptographicOperations.FixedTimeEquals(
-            actualHash,
-            Convert.FromHexString(device.CredentialHashHex));
+        try
+        {
+            var actualHash = SHA256.HashData(Encoding.UTF8.GetBytes(credential));
+            return CryptographicOperations.FixedTimeEquals(
+                actualHash,
+                Convert.FromHexString(device.CredentialHashHex));
+        }
+        catch (FormatException)
+        {
+            // A corrupted store entry must fail closed instead of surfacing as a server error.
+            return false;
+        }
     }
 
     public async Task AddOrUpdateAsync(
@@ -151,8 +162,27 @@ public sealed class TrustedDeviceStore
         }
 
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<StoredTrustedDevice[]>(json, SerializerOptions)
+        var devices = JsonSerializer.Deserialize<StoredTrustedDevice[]>(json, SerializerOptions)
             ?? throw new InvalidDataException("The trusted device store is invalid.");
+        // Skip malformed entries (e.g. a hand-edited credential hash) so one bad record cannot
+        // prevent startup or break validation for every other device.
+        return devices
+            .Where(device => device.DeviceId != Guid.Empty &&
+                             !string.IsNullOrWhiteSpace(device.CredentialHashHex) &&
+                             HasValidCredentialHash(device.CredentialHashHex))
+            .ToArray();
+    }
+
+    private static bool HasValidCredentialHash(string credentialHashHex)
+    {
+        try
+        {
+            return Convert.FromHexString(credentialHashHex).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     private async Task SaveAsync(
