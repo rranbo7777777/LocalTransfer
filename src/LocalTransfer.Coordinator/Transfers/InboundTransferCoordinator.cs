@@ -16,6 +16,12 @@ public sealed record InboundTransferInfo(
 
 public sealed class InboundTransferCoordinator : IAsyncDisposable
 {
+    private const int MaxPendingOffersPerDevice = 10;
+
+    // Terminal-state transfers are kept briefly so the peer can observe the final status,
+    // then swept to bound dictionary growth in the long-running desktop service.
+    private static readonly TimeSpan TerminalRetention = TimeSpan.FromMinutes(10);
+
     private readonly ConcurrentDictionary<Guid, InboundTransfer> _transfers = new();
     private readonly ResumableFileReceiver _receiver = new();
     private readonly string _receiveDirectory;
@@ -37,6 +43,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         }
 
         manifest.Validate();
+        SweepTerminalTransfers();
         var transfer = new InboundTransfer(deviceId, manifest);
         if (!_transfers.TryAdd(manifest.TransferId, transfer))
         {
@@ -47,6 +54,19 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             }
 
             return existing.ToInfo([]);
+        }
+
+        // The cap applies to new offers only; a retried submission of an already-registered
+        // offer must stay idempotent regardless of how many other offers are pending.
+        var pendingOffers = _transfers.Values.Count(transfer =>
+            transfer.DeviceId == deviceId &&
+            transfer.StateMachine.State == TransferState.WaitingForApproval);
+        if (pendingOffers > MaxPendingOffersPerDevice)
+        {
+            _transfers.TryRemove(manifest.TransferId, out _);
+            transfer.Gate.Dispose();
+            throw new InvalidOperationException(
+                $"The device already has {pendingOffers - 1} transfers awaiting approval.");
         }
 
         var info = transfer.ToInfo([]);
@@ -122,6 +142,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         Guid deviceId,
         CancellationToken cancellationToken = default)
     {
+        SweepTerminalTransfers();
         if (!_transfers.TryGetValue(transferId, out var transfer) || transfer.DeviceId != deviceId)
         {
             return null;
@@ -282,6 +303,27 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         return transfer;
     }
 
+    private void SweepTerminalTransfers()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var pair in _transfers)
+        {
+            var transfer = pair.Value;
+            var state = transfer.StateMachine.State;
+            if (state is not (TransferState.Completed or TransferState.Failed or
+                TransferState.Rejected or TransferState.Canceled))
+            {
+                continue;
+            }
+
+            transfer.TerminalAtUtc ??= now;
+            if (now - transfer.TerminalAtUtc.Value >= TerminalRetention)
+            {
+                _transfers.TryRemove(pair.Key, out _);
+            }
+        }
+    }
+
     // Error strings are serialized into status responses served to the paired peer; file I/O
     // exception messages contain local filesystem paths and must be replaced.
     private static string DescribeFailure(Exception exception) =>
@@ -304,6 +346,8 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         public string? FinalPath { get; set; }
 
         public string? Error { get; set; }
+
+        public DateTimeOffset? TerminalAtUtc { get; set; }
 
         public InboundTransferInfo ToInfo(IReadOnlyList<int> missingChunks) =>
             new(

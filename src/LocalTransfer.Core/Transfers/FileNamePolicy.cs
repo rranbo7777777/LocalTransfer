@@ -24,7 +24,13 @@ public static class FileNamePolicy
         }
 
         var sanitized = new string(fileName
-            .Select(character => InvalidCharacters.Contains(character) || char.IsControl(character) ? '_' : character)
+            .Select(character => InvalidCharacters.Contains(character) ||
+                                 char.IsControl(character) ||
+                                 // Format characters (bidi overrides, word joiners, BOM) are
+                                 // invisible but can spoof how a file name renders in the UI.
+                                 char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.Format
+                ? '_'
+                : character)
             .ToArray())
             .Trim()
             .TrimEnd('.', ' ');

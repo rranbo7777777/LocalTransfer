@@ -17,6 +17,10 @@ public sealed record OutboundChunk(byte[] Content, string Sha256Hex);
 
 public sealed class OutboundTransferCoordinator : IDisposable
 {
+    // Terminal-state transfers are kept briefly so the peer can observe the final status,
+    // then swept to bound dictionary growth in the long-running desktop service.
+    private static readonly TimeSpan TerminalRetention = TimeSpan.FromMinutes(10);
+
     private readonly ConcurrentDictionary<Guid, OutboundTransfer> _transfers = new();
 
     public async Task<OutboundTransferInfo> EnqueueAsync(
@@ -30,6 +34,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        SweepTerminalTransfers();
         var fullPath = Path.GetFullPath(sourcePath);
         var file = new FileInfo(fullPath);
         if (!file.Exists)
@@ -69,8 +74,10 @@ public sealed class OutboundTransferCoordinator : IDisposable
         return transfer.ToInfo();
     }
 
-    public IReadOnlyList<OutboundTransferInfo> GetAvailable(Guid deviceId) =>
-        _transfers.Values
+    public IReadOnlyList<OutboundTransferInfo> GetAvailable(Guid deviceId)
+    {
+        SweepTerminalTransfers();
+        return _transfers.Values
             .Where(transfer => transfer.DeviceId == deviceId)
             .Where(transfer => transfer.StateMachine.State is
                 TransferState.Queued or
@@ -80,11 +87,15 @@ public sealed class OutboundTransferCoordinator : IDisposable
             .Select(transfer => transfer.ToInfo())
             .OrderBy(transfer => transfer.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
 
-    public OutboundTransferInfo? Get(Guid transferId, Guid deviceId) =>
-        _transfers.TryGetValue(transferId, out var transfer) && transfer.DeviceId == deviceId
+    public OutboundTransferInfo? Get(Guid transferId, Guid deviceId)
+    {
+        SweepTerminalTransfers();
+        return _transfers.TryGetValue(transferId, out var transfer) && transfer.DeviceId == deviceId
             ? transfer.ToInfo()
             : null;
+    }
 
     public async Task<OutboundChunk> ReadChunkAsync(
         Guid transferId,
@@ -228,6 +239,27 @@ public sealed class OutboundTransferCoordinator : IDisposable
         return transfer;
     }
 
+    private void SweepTerminalTransfers()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var pair in _transfers)
+        {
+            var transfer = pair.Value;
+            var state = transfer.StateMachine.State;
+            if (state is not (TransferState.Completed or TransferState.Failed or
+                TransferState.Canceled or TransferState.Rejected))
+            {
+                continue;
+            }
+
+            transfer.TerminalAtUtc ??= now;
+            if (now - transfer.TerminalAtUtc.Value >= TerminalRetention)
+            {
+                _transfers.TryRemove(pair.Key, out _);
+            }
+        }
+    }
+
     private sealed class OutboundTransfer(Guid deviceId, string sourcePath, FileManifest manifest)
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
@@ -241,6 +273,8 @@ public sealed class OutboundTransferCoordinator : IDisposable
         public TransferStateMachine StateMachine { get; } = new(TransferState.Queued);
 
         public string? Error { get; set; }
+
+        public DateTimeOffset? TerminalAtUtc { get; set; }
 
         public OutboundTransferInfo ToInfo() =>
             new(Manifest.TransferId, DeviceId, Manifest, StateMachine.State, Error);

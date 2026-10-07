@@ -8,5 +8,8 @@
     <LangVersion>12.0</LangVersion>
     <Deterministic>true</Deterministic>
     <DebugType>portable</DebugType>
+    <!-- net8.0-ios is EOL per the MAUI support policy and would fail the build with
+         NETSDK1202; iOS packaging happens in CI on the net9.0-ios target instead. -->
+    <CheckEolWorkloads>false</CheckEolWorkloads>
   </PropertyGroup>
 </Project>

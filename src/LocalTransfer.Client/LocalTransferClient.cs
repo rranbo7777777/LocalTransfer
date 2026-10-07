@@ -158,12 +158,12 @@ public sealed class LocalTransferClient : IDisposable
                     $"/api/v1/outbound/{transfer.TransferId}/chunks/{index}"),
                 cancellationToken);
             response.EnsureSuccessStatusCode();
-            if (!response.Headers.TryGetValues("X-Chunk-SHA256", out var hashValues))
+            if (!response.Headers.TryGetValues("X-Chunk-SHA256", out var hashValues) ||
+                hashValues.FirstOrDefault() is not { Length: 64 } chunkHash ||
+                !chunkHash.All(char.IsAsciiHexDigit))
             {
-                throw new InvalidDataException("The downloaded chunk did not include a SHA-256 value.");
+                throw new InvalidDataException("The downloaded chunk did not include a valid SHA-256 value.");
             }
-
-            var chunkHash = hashValues.Single();
             await using var content = await response.Content.ReadAsStreamAsync(cancellationToken);
             await _receiver.WriteChunkAsync(session, index, content, chunkHash, cancellationToken);
             transferred += plan.GetChunk(index).Length;

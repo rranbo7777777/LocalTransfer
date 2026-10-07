@@ -10,6 +10,11 @@ namespace LocalTransfer.Coordinator.Pairing;
 
 public sealed class PairingCoordinator
 {
+    // Requests whose client never polls (crash, abandoned pairing) must not accumulate:
+    // every status is pruned once the entry outlives this window. Clients stop polling
+    // when their bootstrap expires, which is bounded by the ticket lifetime (minutes).
+    private static readonly TimeSpan RequestRetention = TimeSpan.FromMinutes(15);
+
     private readonly PairingTicketService _tickets = new();
     private readonly ConcurrentDictionary<Guid, PendingPairingRequest> _requests = new();
     private readonly TrustedDeviceStore _trustedDevices;
@@ -42,7 +47,7 @@ public sealed class PairingCoordinator
             throw new InvalidOperationException("A pairing request identifier collision occurred.");
         }
 
-        PruneCompletedRequests();
+        PruneExpiredRequests();
         var info = request.ToInfo();
         PairingRequested?.Invoke(this, info);
         return new PairingSubmissionResponse(request.RequestId, info.Status);
@@ -121,6 +126,7 @@ public sealed class PairingCoordinator
 
     public PairingPollResponse? Poll(Guid requestId)
     {
+        PruneExpiredRequests();
         if (!_requests.TryGetValue(requestId, out var request))
         {
             return null;
@@ -148,6 +154,24 @@ public sealed class PairingCoordinator
             throw new ArgumentException("A valid device identifier and display name are required.", nameof(device));
         }
 
+        // The display name is stored permanently in the trusted-device store and rendered in
+        // desktop dialogs; unbounded or control-bearing values would let a submission bloat
+        // the store and spoof or garble the approval prompt.
+        if (device.DisplayName.Length > MaxDisplayNameLength ||
+            device.DisplayName.Any(char.IsControl))
+        {
+            throw new ArgumentException(
+                $"The device display name must be at most {MaxDisplayNameLength} characters without control characters.",
+                nameof(device));
+        }
+
+        if (device.Platform.Length > MaxPlatformLength)
+        {
+            throw new ArgumentException(
+                $"The device platform must be at most {MaxPlatformLength} characters.",
+                nameof(device));
+        }
+
         if (device.ProtocolVersion < ProtocolConstants.MinimumSupportedVersion ||
             device.ProtocolVersion > ProtocolConstants.CurrentVersion)
         {
@@ -155,14 +179,16 @@ public sealed class PairingCoordinator
         }
     }
 
-    private void PruneCompletedRequests()
+    private const int MaxDisplayNameLength = 64;
+
+    private const int MaxPlatformLength = 32;
+
+    private void PruneExpiredRequests()
     {
+        var oldestAllowed = DateTimeOffset.UtcNow - RequestRetention;
         foreach (var pair in _requests)
         {
-            // Only CredentialDelivered is safe to drop: its client has already received the
-            // credential. Rejected entries must stay so the client's poll sees the rejection
-            // instead of a 404; Approved entries are still waiting to be polled.
-            if (pair.Value.Status == PairingRequestStatus.CredentialDelivered)
+            if (pair.Value.RequestedAtUtc < oldestAllowed)
             {
                 _requests.TryRemove(pair.Key, out _);
             }

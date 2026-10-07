@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.RateLimiting;
 using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Pairing;
 using LocalTransfer.Contracts.Transfers;
@@ -11,6 +12,7 @@ using LocalTransfer.Core.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -83,8 +85,25 @@ public sealed class CoordinatorHost : IAsyncDisposable
             builder.WebHost.ConfigureKestrel(serverOptions => ConfigureKestrel(serverOptions, certificate));
             builder.Services.ConfigureHttpJsonOptions(options =>
                 options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase);
+            builder.Services.AddRateLimiter(options =>
+            {
+                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+                // The pairing endpoints are the only unauthenticated surface; partition by
+                // remote address so one LAN peer cannot flood the approval dialog or the
+                // poll loop without throttling other devices.
+                options.AddPolicy(PairingRateLimitPolicy, context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 30,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0
+                        }));
+            });
 
             var application = builder.Build();
+            application.UseRateLimiter();
             MapEndpoints(application);
 
             try
@@ -187,13 +206,13 @@ public sealed class CoordinatorHost : IAsyncDisposable
             {
                 return Results.BadRequest(new { error = exception.Message });
             }
-        });
+        }).RequireRateLimiting(PairingRateLimitPolicy);
 
         application.MapGet("/api/v1/pairing/{requestId:guid}", (Guid requestId) =>
         {
             var response = Pairing.Poll(requestId);
             return response is null ? Results.NotFound() : Results.Ok(response);
-        });
+        }).RequireRateLimiting(PairingRateLimitPolicy);
 
         application.MapPost("/api/v1/transfers", (HttpRequest request, FileManifest manifest) =>
         {
@@ -422,6 +441,8 @@ public sealed class CoordinatorHost : IAsyncDisposable
                 : Results.NotFound();
         });
     }
+
+    private const string PairingRateLimitPolicy = "pairing";
 
     private bool TryAuthenticate(HttpRequest request, out Guid deviceId)
     {

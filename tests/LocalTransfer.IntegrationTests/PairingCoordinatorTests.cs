@@ -37,11 +37,47 @@ public sealed class PairingCoordinatorTests
         Assert.DoesNotContain(firstPoll.Credential!, persistedJson, StringComparison.Ordinal);
     }
 
-    private static DeviceDescriptor CreateDevice() =>
+    [Fact]
+    public void Submit_RejectsOversizedOrControlBearingDisplayName()
+    {
+        using var directory = new PairingTemporaryDirectory();
+        var coordinator = new PairingCoordinator(new TrustedDeviceStore(directory.Path));
+        var ticket = coordinator.CreateTicket(TimeSpan.FromMinutes(2));
+
+        var oversized = CreateSubmission(coordinator, CreateDevice(displayName: new string('x', 65)));
+        var controlBearing = CreateSubmission(coordinator, CreateDevice(displayName: "device\nname"));
+
+        Assert.Throws<ArgumentException>(() => coordinator.Submit(oversized));
+        Assert.Throws<ArgumentException>(() => coordinator.Submit(controlBearing));
+    }
+
+    [Fact]
+    public void Submit_RejectsOversizedPlatform()
+    {
+        using var directory = new PairingTemporaryDirectory();
+        var coordinator = new PairingCoordinator(new TrustedDeviceStore(directory.Path));
+
+        var submission = CreateSubmission(
+            coordinator, CreateDevice(platform: new string('x', 33)));
+
+        Assert.Throws<ArgumentException>(() => coordinator.Submit(submission));
+    }
+
+    private static PairingSubmission CreateSubmission(
+        PairingCoordinator coordinator,
+        DeviceDescriptor device)
+    {
+        var ticket = coordinator.CreateTicket(TimeSpan.FromMinutes(2));
+        return new PairingSubmission(ticket.Secret, device);
+    }
+
+    private static DeviceDescriptor CreateDevice(
+        string displayName = "测试手机",
+        string platform = "Android") =>
         new(
             Guid.NewGuid(),
-            "测试手机",
-            "Android",
+            displayName,
+            platform,
             ProtocolConstants.CurrentVersion,
             DeviceCapabilities.Upload | DeviceCapabilities.Download | DeviceCapabilities.Resume);
 

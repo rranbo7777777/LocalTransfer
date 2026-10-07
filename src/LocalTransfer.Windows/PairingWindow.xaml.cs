@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Media.Imaging;
 using LocalTransfer.Contracts.Pairing;
 using QRCoder;
+using MessageBox = System.Windows.MessageBox;
 
 namespace LocalTransfer.Windows;
 

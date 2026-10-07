@@ -21,4 +21,14 @@ public sealed class FileNamePolicyTests
         Assert.Equal(32, result.Length);
         Assert.EndsWith(".zip", result, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Sanitize_ReplacesBidiFormatCharacters()
+    {
+        // U+202E right-to-left override can render "evil.exe" as "exe.lave".
+        var result = FileNamePolicy.Sanitize("report\u202egxe.txt");
+
+        Assert.Equal("report_gxe.txt", result);
+        Assert.DoesNotContain('\u202e', result);
+    }
 }
