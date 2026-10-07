@@ -15,6 +15,8 @@
 - Android 文件选择器，以及微信/QQ 等应用的 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 系统分享入口。
 - Android/iOS 二维码扫描页面；扫码不可用时可粘贴配对 JSON。
 - 接收到手机应用目录后，可打开系统分享/保存菜单。
+- 服务端防护：配对端点按来源 IP 限流（30 次/分钟，超限 429），每设备待批准邀约上限 10 个（超出 409），配对请求 15 分钟过期清理，终态传输 10 分钟保留后清扫。
+- 输入与文件名净化：设备名限 64 字符且禁控制字符，文件名过滤 Unicode 双向字符与 `CON`/`NUL` 等保留名，断点检查点防目录穿越，JSON 响应限 4 MiB，错误信息脱敏。
 - 协议、核心逻辑和真实 HTTPS 双向流程的自动化测试。
 
 ## 快速开始
@@ -35,15 +37,15 @@
 所有命令建议在 Git Bash 中执行：
 
 ```bash
-dotnet restore src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj -p:CheckEolWorkloads=false
+dotnet restore src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj
 dotnet build src/LocalTransfer.Windows/LocalTransfer.Windows.csproj --no-restore
-dotnet build src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj -f net8.0-android --no-restore -p:CheckEolWorkloads=false
+dotnet build src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj -f net8.0-android --no-restore
 dotnet test tests/LocalTransfer.Core.Tests/LocalTransfer.Core.Tests.csproj --no-restore
 dotnet test tests/LocalTransfer.Protocol.Tests/LocalTransfer.Protocol.Tests.csproj --no-restore
 dotnet test tests/LocalTransfer.IntegrationTests/LocalTransfer.IntegrationTests.csproj --no-restore
 ```
 
-Android 原生工具在含中文的工作区路径下无法稳定读取中间资源，因此 `Directory.Build.props` 只把 MAUI 项目的 `obj` 重定向到系统临时目录中的纯英文路径；源码和最终 APK 仍在工作区内。
+Android 原生工具在含中文的工作区路径下无法稳定读取中间资源，因此 `Directory.Build.props` 只把 MAUI 项目的 `obj` 重定向到系统临时目录中的纯英文路径；源码和最终 APK 仍在工作区内。MAUI 8 的 EOL workload 检查（`CheckEolWorkloads=false`）也在同一文件中全局关闭，命令无需再显式传参。
 
 ### 发布 Release APK
 
@@ -53,7 +55,7 @@ Android 原生工具在含中文的工作区路径下无法稳定读取中间资
 dotnet publish src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj -f net8.0-android -c Release \
   -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="signing/localtransfer.keystore" \
   -p:AndroidSigningKeyAlias=localtransfer -p:AndroidSigningStorePass=<密码> -p:AndroidSigningKeyPass=<密码> \
-  -p:AndroidPackageFormat=apk -p:RuntimeIdentifier=android-arm64 -p:CheckEolWorkloads=false
+  -p:AndroidPackageFormat=apk -p:RuntimeIdentifier=android-arm64
 
 BT="C:/Program Files (x86)/Android/android-sdk/build-tools/35.0.0"
 P=src/LocalTransfer.Mobile/bin/Release/net8.0-android/android-arm64/publish
@@ -72,10 +74,10 @@ java -jar "$BT/lib/apksigner.jar" sign \
 - Windows 到手机的发送队列目前保存在内存中，Windows 应用重启后需重新排队。
 - 尚未实现历史记录、自动发现、多网卡手动选择、安装器和自动配置防火墙规则。
 - 尚未执行需求基线中的 10 GB 单文件、100 文件批量和断网恢复真机验收。
-- MAUI 8 已结束官方支持；这是遵循本次指定的 .NET 8 回退目标，后续应单独评估升级。
+- MAUI 8 已结束官方支持；这是遵循本次指定的 .NET 8 回退目标，已在 `Directory.Build.props` 中设置 `CheckEolWorkloads=false` 维持本地构建，后续应单独评估升级。
 
 ## iOS 打包
 
-iOS 的原生链接与 .app 组装要求 `IsMacEnabled=true`（即真实的 Mac 环境），Windows 本机只能编译托管程序集、无法产出 ipa。仓库提供 GitHub Actions 工作流 `.github/workflows/ios-package.yml`（macOS runner、手动触发），产出未签名 ipa，再用 Sideloadly/AltStore 以个人 Apple ID 签名安装。本机需临时把 Mobile 项目切到 `net9.0-ios`（本机只装有 .NET 9 iOS 目标包），工作流中已包含同样处理。
+iOS 的原生链接与 .app 组装要求 `IsMacEnabled=true`（即真实的 Mac 环境），Windows 本机只能编译托管程序集、无法产出 ipa。仓库提供 GitHub Actions 工作流 `.github/workflows/ios-package.yml`（macOS runner、手动触发，引用的 Actions 均固定到 commit SHA），产出未签名 ipa，再用 Sideloadly/AltStore 以个人 Apple ID 签名安装。本机需临时把 Mobile 项目切到 `net9.0-ios`（本机只装有 .NET 9 iOS 目标包），工作流中已包含同样处理。
 
 协议和后续计划见 [协议说明](docs/protocol-v1.md) 与 [实施路线](docs/roadmap.md)。

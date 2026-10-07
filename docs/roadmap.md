@@ -7,6 +7,8 @@
 - 手机上传、电脑下载队列、断点文件接收与幂等完成确认。
 - MAUI Android UI、安全存储、扫码、文件选择和系统分享入口。
 - 核心、协议和 HTTPS 双向集成测试；Android Debug APK 构建。
+- 四轮代码安全扫描加固，共修复 33 项问题：端点限流、输入校验、请求与任务 TTL 清理、文件名与断点路径净化、JSON 解析限额、错误脱敏、CI Actions 固定 commit SHA。
+- Release APK 发布流程与手动签名说明；GitHub Actions iOS 打包工作流。
 
 ## 下一阶段：真机联调与可靠性验收
 
