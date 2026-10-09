@@ -47,13 +47,26 @@ dotnet test tests/LocalTransfer.IntegrationTests/LocalTransfer.IntegrationTests.
 
 Android 原生工具在含中文的工作区路径下无法稳定读取中间资源，因此 `Directory.Build.props` 只把 MAUI 项目的 `obj` 重定向到系统临时目录中的纯英文路径；源码和最终 APK 仍在工作区内。MAUI 8 的 EOL workload 检查（`CheckEolWorkloads=false`）也在同一文件中全局关闭，命令无需再显式传参。
 
+### 发布 Windows 端
+
+自包含发布（免装 .NET），把输出目录整体替换掉 `dist/win-x64`：
+
+```bash
+dotnet publish src/LocalTransfer.Windows/LocalTransfer.Windows.csproj -c Release \
+  -r win-x64 --self-contained true -o /c/Users/$USER/AppData/Local/Temp/lt-win-stage
+# 确认发布成功后再换入 dist/win-x64（直接 -o 到已有目录会残留上次的旧文件）
+```
+
 ### 发布 Release APK
 
 发布命令需用单数 `RuntimeIdentifier`（复数会触发引用项目的 MSB3030），且本机的 MSBuild 签名任务不会真正写入签名，发布后需用 build-tools 手动 zipalign + apksigner 签名（密钥库见 `signing/`，密码见 `signing/keystore-info.txt`）：
 
+`AndroidSigningKeyStore` **必须给绝对路径**：MSBuild 以**项目目录**（`src/LocalTransfer.Mobile/`）为基准解析相对路径，写 `signing/localtransfer.keystore` 会直接报 `XA4310: 找不到 '$(AndroidSigningKeyStore)' 文件`。
+
 ```bash
+ROOT="$(cygpath -w "$PWD")"   # 在仓库根目录执行；Git Bash 的 /d/... 路径 MSBuild 无法识别
 dotnet publish src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj -f net8.0-android -c Release \
-  -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="signing/localtransfer.keystore" \
+  -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$ROOT/signing/localtransfer.keystore" \
   -p:AndroidSigningKeyAlias=localtransfer -p:AndroidSigningStorePass=<密码> -p:AndroidSigningKeyPass=<密码> \
   -p:AndroidPackageFormat=apk -p:RuntimeIdentifier=android-arm64
 
@@ -65,6 +78,10 @@ java -jar "$BT/lib/apksigner.jar" sign \
   --ks-pass pass:<密码> --key-pass pass:<密码> \
   --out dist/局域传输-1.0-arm64.apk "$P/aligned.apk"
 ```
+
+签名顺序不能颠倒：**先 zipalign 再 apksigner**，且必须对未签名的 `com.localtransfer.mobile.apk` 做，不要用 `-Signed.apk`（对齐会破坏已有签名）。build-tools 35 的 apksigner 默认写出 v4 签名，因此会一并生成 `dist/局域传输-1.0-arm64.apk.idsig`，两个文件都要一并分发。
+
+APK 的 `minSdkVersion` 是 29（Android 10），只写 v3 签名即可安装（v2 仅 API 24–27 必需、v1 仅 API 24 以下必需），所以 `apksigner verify` 显示 `v2 scheme: false` 属正常现象。若以后下调 `SupportedOSPlatformVersion` 到 24–27，需显式加 `--v2-signing-enabled true`。
 
 ## 当前限制
 
