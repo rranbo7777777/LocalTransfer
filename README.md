@@ -15,7 +15,7 @@
 - Android 文件选择器，以及微信/QQ 等应用的 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 系统分享入口。
 - Android/iOS 二维码扫描页面；扫码不可用时可粘贴配对 JSON。
 - 接收到手机应用目录后，可打开系统分享/保存菜单。
-- 服务端防护：配对端点按来源 IP 限流（30 次/分钟，超限 429），每设备待批准邀约上限 10 个（超出 409），配对请求 15 分钟过期清理，终态传输 10 分钟保留后清扫。
+- 服务端防护：配对端点按来源 IP 限流、提交与轮询各自独立计数（提交票据 30 次/分钟；状态轮询 240 次/分钟，必须高于手机自身 2 秒一次的轮询频率，否则用户回答批准稍慢就会触发 429 中断配对），每设备待批准邀约上限 10 个（超出 409），配对请求 15 分钟过期清理，终态传输 10 分钟保留后清扫。
 - 输入与文件名净化：设备名限 64 字符且禁控制字符，文件名过滤 Unicode 双向字符与 `CON`/`NUL` 等保留名，断点检查点防目录穿越，JSON 响应限 4 MiB，错误信息脱敏。
 - 协议、核心逻辑和真实 HTTPS 双向流程的自动化测试。
 
@@ -34,7 +34,7 @@
 
 ## 常用命令
 
-所有命令建议在 Git Bash 中执行：
+所有命令建议在 Git Bash 中执行。**不要直接编译 `LocalTransfer.sln`**：本机缺少 `net8.0-ios` 目标包，Mobile 项目的 iOS 目标会让整个解决方案报 `NETSDK1135`（`SupportedOSPlatformVersion 16.0 不能高于 TargetPlatformVersion 1.0`）；请按下面的命令逐个编译需要的项目。iOS 由 CI 用 `net9.0-ios` 打包，见文末。
 
 ```bash
 dotnet restore src/LocalTransfer.Mobile/LocalTransfer.Mobile.csproj

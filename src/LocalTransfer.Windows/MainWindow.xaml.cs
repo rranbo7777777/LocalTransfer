@@ -228,16 +228,36 @@ public partial class MainWindow : Window
 
     private void RefreshTrustedDevices()
     {
+        // Rebuilding the item source clears the ComboBox selection. Remember the current target
+        // so a pairing that happens while the user is looking at the list does not silently
+        // switch the destination back to the first device.
+        var previousDeviceId = (DeviceComboBox.SelectedItem as TrustedDeviceInfo)?.DeviceId;
+
         TrustedDevices.Clear();
         foreach (var device in _coordinator.TrustedDevices.GetAll())
         {
             TrustedDevices.Add(device);
         }
 
-        if (TrustedDevices.Count > 0)
+        var restoredIndex = -1;
+        if (previousDeviceId is { } deviceId)
         {
-            DeviceComboBox.SelectedIndex = 0;
+            for (var index = 0; index < TrustedDevices.Count; index++)
+            {
+                if (TrustedDevices[index].DeviceId == deviceId)
+                {
+                    restoredIndex = index;
+                    break;
+                }
+            }
         }
+
+        // Fall back to the first entry only when nothing usable was selected before.
+        DeviceComboBox.SelectedIndex = restoredIndex >= 0
+            ? restoredIndex
+            : TrustedDevices.Count > 0
+                ? 0
+                : -1;
 
         UpdateSendButton();
     }

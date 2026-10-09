@@ -20,4 +20,13 @@ public static class ProtocolConstants
     /// so a huge count would let a peer amplify one request into a multi-gigabyte response.
     /// </summary>
     public const int MaxChunkCount = 262_144;
+
+    /// <summary>
+    /// Delay between pairing status polls. The desktop approval dialog stays open until a
+    /// human answers it, so this value multiplied by the ticket lifetime is the number of
+    /// requests the coordinator's pairing poll limiter has to tolerate per minute
+    /// (60 / 2 s = 30 requests). Shrinking it without widening the server-side budget makes
+    /// a slow human beat the rate limiter and aborts the pairing with HTTP 429.
+    /// </summary>
+    public static readonly TimeSpan PairingPollInterval = TimeSpan.FromSeconds(2);
 }

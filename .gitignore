@@ -487,6 +487,9 @@ $RECYCLE.BIN/
 /dist/
 /signing/
 
+# Local agent working memory; not part of the source tree.
+/.workbuddy/
+
 # Android/Java keystores must never be committed, even outside /signing/.
 *.keystore
 *.jks

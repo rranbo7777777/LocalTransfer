@@ -91,12 +91,31 @@ public sealed class CoordinatorHost : IAsyncDisposable
                 // The pairing endpoints are the only unauthenticated surface; partition by
                 // remote address so one LAN peer cannot flood the approval dialog or the
                 // poll loop without throttling other devices.
-                options.AddPolicy(PairingRateLimitPolicy, context =>
+                //
+                // Submit and poll get separate budgets. They used to share one 30/min window,
+                // which the legitimate client then tripped on its own: the poll runs on a
+                // timer for as long as a human leaves the desktop dialog open, so a shared
+                // budget guaranteed HTTP 429 after ~22 seconds and aborted every pairing the
+                // user did not answer instantly. Each named policy owns its counter cache,
+                // so the two limits below do not consume each other's permits.
+                options.AddPolicy(PairingSubmitRateLimitPolicy, context =>
                     RateLimitPartition.GetFixedWindowLimiter(
                         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                         _ => new FixedWindowRateLimiterOptions
                         {
-                            PermitLimit = 30,
+                            // Cheap to create and consumes a one-time ticket; keep this tight.
+                            PermitLimit = PairingSubmitPermitLimit,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0
+                        }));
+                options.AddPolicy(PairingPollRateLimitPolicy, context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            // Must stay well above 60 / ProtocolConstants.PairingPollInterval
+                            // (30/min) so a slow human cannot exhaust the budget mid-pairing.
+                            PermitLimit = PairingPollPermitLimit,
                             Window = TimeSpan.FromMinutes(1),
                             QueueLimit = 0
                         }));
@@ -206,13 +225,13 @@ public sealed class CoordinatorHost : IAsyncDisposable
             {
                 return Results.BadRequest(new { error = exception.Message });
             }
-        }).RequireRateLimiting(PairingRateLimitPolicy);
+        }).RequireRateLimiting(PairingSubmitRateLimitPolicy);
 
         application.MapGet("/api/v1/pairing/{requestId:guid}", (Guid requestId) =>
         {
             var response = Pairing.Poll(requestId);
             return response is null ? Results.NotFound() : Results.Ok(response);
-        }).RequireRateLimiting(PairingRateLimitPolicy);
+        }).RequireRateLimiting(PairingPollRateLimitPolicy);
 
         application.MapPost("/api/v1/transfers", (HttpRequest request, FileManifest manifest) =>
         {
@@ -442,7 +461,19 @@ public sealed class CoordinatorHost : IAsyncDisposable
         });
     }
 
-    private const string PairingRateLimitPolicy = "pairing";
+    /// <summary>Permits per minute and source address for the one-time-ticket submission endpoint.</summary>
+    public const int PairingSubmitPermitLimit = 30;
+
+    /// <summary>
+    /// Permits per minute and source address for the pairing status poll. Must stay comfortably
+    /// above the client's own poll rate (60 / <see cref="ProtocolConstants.PairingPollInterval"/>)
+    /// or a slow human answering the desktop dialog will exhaust the budget and break pairing.
+    /// </summary>
+    public const int PairingPollPermitLimit = 240;
+
+    private const string PairingSubmitRateLimitPolicy = "pairing-submit";
+
+    private const string PairingPollRateLimitPolicy = "pairing-poll";
 
     private bool TryAuthenticate(HttpRequest request, out Guid deviceId)
     {

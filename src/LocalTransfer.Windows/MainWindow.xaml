@@ -47,10 +47,12 @@
                     <TextBlock Margin="24,0,0,24" Foreground="White" FontSize="21"
                                FontWeight="SemiBold" Text="局域传输" />
                     <Button Style="{StaticResource SidebarButton}" Background="#273B63" Content="发送文件" />
-                    <Button Style="{StaticResource SidebarButton}" Content="设备" />
-                    <Button Style="{StaticResource SidebarButton}" Content="传输任务" />
-                    <Button Style="{StaticResource SidebarButton}" Content="历史记录" />
-                    <Button Style="{StaticResource SidebarButton}" Content="设置" />
+                    <!-- The other navigation entries were placeholders with no Click handler, so
+                         clicking them silently did nothing. Show the roadmap as text instead of
+                         dead buttons until those pages exist. -->
+                    <TextBlock Margin="24,20,24,0" Foreground="#7C8CAE" FontSize="12"
+                               TextWrapping="Wrap"
+                               Text="设备管理、传输任务、历史记录与设置尚未实现。" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="24,0,24,22">
                     <TextBlock Foreground="#8FA0BE" FontSize="12" Text="协议版本 1" />
