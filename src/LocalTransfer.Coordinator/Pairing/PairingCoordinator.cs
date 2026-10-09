@@ -33,7 +33,7 @@ public sealed class PairingCoordinator
         ArgumentNullException.ThrowIfNull(submission);
         ValidateDevice(submission.Device);
 
-        if (!_tickets.TryConsume(submission.Secret))
+        if (!_tickets.TryConsume(submission.Secret, out var ticketExpiresAtUtc))
         {
             throw new UnauthorizedAccessException("The pairing ticket is invalid or expired.");
         }
@@ -41,7 +41,8 @@ public sealed class PairingCoordinator
         var request = new PendingPairingRequest(
             Guid.NewGuid(),
             submission.Device,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            ticketExpiresAtUtc);
         if (!_requests.TryAdd(request.RequestId, request))
         {
             throw new InvalidOperationException("A pairing request identifier collision occurred.");
@@ -53,17 +54,38 @@ public sealed class PairingCoordinator
         return new PairingSubmissionResponse(request.RequestId, info.Status);
     }
 
-    public IReadOnlyList<PairingRequestInfo> GetPendingRequests() =>
-        _requests.Values
-            .Select(request => request.ToInfo())
-            .Where(request => request.Status == PairingRequestStatus.Pending)
+    public IReadOnlyList<PairingRequestInfo> GetPendingRequests()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return _requests.Values
+            .Where(request => request.IsPending(now))
             .OrderBy(request => request.RequestedAtUtc)
+            .Select(request => request.ToInfo())
             .ToArray();
+    }
 
     public async Task<bool> ApproveAsync(Guid requestId, CancellationToken cancellationToken = default)
     {
         if (!_requests.TryGetValue(requestId, out var request))
         {
+            return false;
+        }
+
+        // The pairing ticket also bounds how long the client keeps polling. Approving a request
+        // whose ticket already lapsed would write a credential the phone never receives (it gave
+        // up when its bootstrap expired), so the desktop would trust a credential that does not
+        // exist on the phone — and every later transfer from that phone would fail with 401 until
+        // the user paired again by hand. Refuse instead; the desktop reports it to the user.
+        if (DateTimeOffset.UtcNow > request.ExpiresAtUtc)
+        {
+            lock (request.Gate)
+            {
+                if (request.Status == PairingRequestStatus.Pending)
+                {
+                    request.Status = PairingRequestStatus.Rejected;
+                }
+            }
+
             return false;
         }
 
@@ -204,7 +226,8 @@ public sealed class PairingCoordinator
     private sealed class PendingPairingRequest(
         Guid requestId,
         DeviceDescriptor device,
-        DateTimeOffset requestedAtUtc)
+        DateTimeOffset requestedAtUtc,
+        DateTimeOffset expiresAtUtc)
     {
         public object Gate { get; } = new();
 
@@ -214,17 +237,28 @@ public sealed class PairingCoordinator
 
         public DateTimeOffset RequestedAtUtc { get; } = requestedAtUtc;
 
+        /// <summary>When the pairing ticket that created this request stops being usable.</summary>
+        public DateTimeOffset ExpiresAtUtc { get; } = expiresAtUtc;
+
         public PairingRequestStatus Status { get; set; } = PairingRequestStatus.Pending;
 
         public bool ApprovalInProgress { get; set; }
 
         public string? Credential { get; set; }
 
+        public bool IsPending(DateTimeOffset now)
+        {
+            lock (Gate)
+            {
+                return Status == PairingRequestStatus.Pending && now <= ExpiresAtUtc;
+            }
+        }
+
         public PairingRequestInfo ToInfo()
         {
             lock (Gate)
             {
-                return new PairingRequestInfo(RequestId, Device, RequestedAtUtc, Status);
+                return new PairingRequestInfo(RequestId, Device, RequestedAtUtc, Status, ExpiresAtUtc);
             }
         }
     }

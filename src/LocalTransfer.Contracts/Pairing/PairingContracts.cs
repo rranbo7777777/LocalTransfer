@@ -23,8 +23,14 @@ public sealed record PairingSubmissionResponse(Guid RequestId, PairingRequestSta
 
 public sealed record PairingPollResponse(PairingRequestStatus Status, string? Credential);
 
+/// <summary>
+/// A pairing request waiting on the desktop. <paramref name="ExpiresAtUtc"/> is when the phone
+/// stops waiting, so the approval UI can show a countdown instead of letting the user answer
+/// after the client already gave up — which used to leave the two sides permanently out of sync.
+/// </summary>
 public sealed record PairingRequestInfo(
     Guid RequestId,
     DeviceDescriptor Device,
     DateTimeOffset RequestedAtUtc,
-    PairingRequestStatus Status);
+    PairingRequestStatus Status,
+    DateTimeOffset ExpiresAtUtc = default);

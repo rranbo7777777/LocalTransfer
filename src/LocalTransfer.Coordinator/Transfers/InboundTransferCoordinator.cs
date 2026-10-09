@@ -12,11 +12,19 @@ public sealed record InboundTransferInfo(
     TransferState State,
     IReadOnlyList<int> MissingChunks,
     string? FinalPath,
-    string? Error);
+    string? Error,
+    DateTimeOffset ExpiresAtUtc = default);
 
 public sealed class InboundTransferCoordinator : IAsyncDisposable
 {
     private const int MaxPendingOffersPerDevice = 10;
+
+    /// <summary>
+    /// How long an unanswered "may I send you this file?" prompt stays open. It has to outlast
+    /// the client's own approval wait (ten minutes, see <c>LocalTransferClient.UploadAsync</c>)
+    /// so a phone that is still polling never sees its offer disappear underneath it.
+    /// </summary>
+    public static readonly TimeSpan DefaultOfferLifetime = TimeSpan.FromMinutes(11);
 
     // Terminal-state transfers are kept briefly so the peer can observe the final status,
     // then swept to bound dictionary growth in the long-running desktop service.
@@ -25,11 +33,20 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, InboundTransfer> _transfers = new();
     private readonly ResumableFileReceiver _receiver = new();
     private readonly string _receiveDirectory;
+    private readonly TimeSpan _offerLifetime;
 
-    public InboundTransferCoordinator(string receiveDirectory)
+    public InboundTransferCoordinator(string receiveDirectory, TimeSpan? offerLifetime = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(receiveDirectory);
         _receiveDirectory = Path.GetFullPath(receiveDirectory);
+        _offerLifetime = offerLifetime ?? DefaultOfferLifetime;
+        if (_offerLifetime <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(offerLifetime),
+                "The offer lifetime must be positive.");
+        }
+
         Directory.CreateDirectory(_receiveDirectory);
     }
 
@@ -44,7 +61,10 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
 
         manifest.Validate();
         SweepTerminalTransfers();
-        var transfer = new InboundTransfer(deviceId, manifest);
+        // Expiring first is what keeps the per-device cap below meaningful: an unanswered prompt
+        // gives its slot back instead of counting against the phone forever.
+        SweepExpiredOffers();
+        var transfer = new InboundTransfer(deviceId, manifest, DateTimeOffset.UtcNow.Add(_offerLifetime));
         if (!_transfers.TryAdd(manifest.TransferId, transfer))
         {
             var existing = _transfers[manifest.TransferId];
@@ -74,12 +94,15 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         return info;
     }
 
-    public IReadOnlyList<InboundTransferInfo> GetPendingOffers() =>
-        _transfers.Values
+    public IReadOnlyList<InboundTransferInfo> GetPendingOffers()
+    {
+        SweepExpiredOffers();
+        return _transfers.Values
             .Where(transfer => transfer.StateMachine.State == TransferState.WaitingForApproval)
             .Select(transfer => transfer.ToInfo([]))
             .OrderBy(transfer => transfer.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
 
     /// <summary>
     /// Snapshot of every inbound transfer regardless of device, for the desktop UI. The missing
@@ -89,6 +112,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
     public IReadOnlyList<InboundTransferInfo> GetAll()
     {
         SweepTerminalTransfers();
+        SweepExpiredOffers();
         return _transfers.Values
             .Select(transfer => transfer.ToInfo([]))
             .OrderBy(info => info.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
@@ -107,6 +131,15 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         {
             if (transfer.StateMachine.State != TransferState.WaitingForApproval)
             {
+                return false;
+            }
+
+            // Checked here as well as in the sweep so a late "yes" can never be accepted just
+            // because no other call happened to run the sweep first. The same mistake in the
+            // pairing flow handed the phone a credential it had already stopped waiting for.
+            if (DateTimeOffset.UtcNow > transfer.ExpiresAtUtc)
+            {
+                transfer.StateMachine.TransitionTo(TransferState.Rejected);
                 return false;
             }
 
@@ -157,6 +190,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         SweepTerminalTransfers();
+        SweepExpiredOffers();
         if (!_transfers.TryGetValue(transferId, out var transfer) || transfer.DeviceId != deviceId)
         {
             return null;
@@ -338,6 +372,52 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Closes offers whose approval prompt was never answered.
+    /// <para>
+    /// Without this an ignored prompt left the transfer in <see cref="TransferState.WaitingForApproval"/>
+    /// forever. Two things then went wrong: the phone kept polling for approval until its own
+    /// timeout instead of being told "no", and every ignored prompt permanently consumed one of
+    /// the ten per-device offer slots — after ten of them that phone could not send anything at
+    /// all until the desktop was restarted.
+    /// </para>
+    /// </summary>
+    private void SweepExpiredOffers()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var transfer in _transfers.Values)
+        {
+            if (now <= transfer.ExpiresAtUtc)
+            {
+                continue;
+            }
+
+            if (transfer.StateMachine.State != TransferState.WaitingForApproval)
+            {
+                continue;
+            }
+
+            // Never race an approval that is already in flight: if the gate is held, that
+            // operation is about to change the state anyway and the next sweep will see it.
+            if (!transfer.Gate.Wait(TimeSpan.Zero))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (transfer.StateMachine.State == TransferState.WaitingForApproval)
+                {
+                    transfer.StateMachine.TransitionTo(TransferState.Rejected);
+                }
+            }
+            finally
+            {
+                transfer.Gate.Release();
+            }
+        }
+    }
+
     // Error strings are serialized into status responses served to the paired peer; file I/O
     // exception messages contain local filesystem paths and must be replaced.
     private static string DescribeFailure(Exception exception) =>
@@ -345,13 +425,16 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             ? "A local file error occurred."
             : exception.Message;
 
-    private sealed class InboundTransfer(Guid deviceId, FileManifest manifest)
+    private sealed class InboundTransfer(Guid deviceId, FileManifest manifest, DateTimeOffset expiresAtUtc)
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
 
         public Guid DeviceId { get; } = deviceId;
 
         public FileManifest Manifest { get; } = manifest;
+
+        /// <summary>When the unanswered approval prompt closes itself.</summary>
+        public DateTimeOffset ExpiresAtUtc { get; } = expiresAtUtc;
 
         public TransferStateMachine StateMachine { get; } = new();
 
@@ -371,6 +454,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
                 StateMachine.State,
                 missingChunks,
                 FinalPath,
-                Error);
+                Error,
+                ExpiresAtUtc);
     }
 }

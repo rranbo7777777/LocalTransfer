@@ -114,8 +114,12 @@ public partial class MainPage : ContentPage
 			}
 
 			ConnectionStatusLabel.Text = "等待电脑批准…";
+			ShowPairingStatus();
 			var device = new DeviceDescriptor(
-				MobileConnectionStore.GetOrCreateDeviceId(),
+				// Reuse the identifier of an existing pairing when there is one: the desktop
+				// keys trusted devices by this value, so a fresh identifier would register a
+				// duplicate entry for the same phone instead of updating the existing one.
+				MobileConnectionStore.GetOrCreateDeviceId(_connection?.DeviceId),
 				DeviceInfo.Current.Name,
 				DeviceInfo.Current.Platform.ToString(),
 				ProtocolConstants.CurrentVersion,
@@ -127,9 +131,17 @@ public partial class MainPage : ContentPage
 		}
 		catch (Exception exception)
 		{
-			ConnectionStatusLabel.Text = _connection is null ? "未连接" : "已连接";
+			if (_connection is null)
+			{
+				ShowDisconnectedStatus();
+			}
+			else
+			{
+				ShowConnectedStatus();
+			}
+
 			MobileDiagnostics.Log("pairing", exception);
-			await DisplayAlert("配对失败", exception.Message, "确定");
+			await DisplayAlert("配对失败", DescribePairingFailure(exception), "确定");
 		}
 		finally
 		{
@@ -189,13 +201,7 @@ public partial class MainPage : ContentPage
 		{
 			foreach (var file in _selectedFiles)
 			{
-				var progress = new Progress<TransferProgress>(value =>
-				{
-					var percentage = value.TotalBytes == 0
-						? 100
-						: (int)(value.BytesTransferred * 100 / value.TotalBytes);
-					TransferStatusLabel.Text = $"正在发送 {value.FileName} · {percentage}%";
-				});
+				var progress = new Progress<TransferProgress>(value => ReportProgress("正在发送", value));
 				await _client.UploadAsync(
 					file.FileName,
 					file.OpenReadAsync,
@@ -209,10 +215,15 @@ public partial class MainPage : ContentPage
 			SelectedFilesSummary.Text = "0 个文件";
 			await DisplayAlert("发送完成", "所有文件均已通过 SHA-256 校验并保存到电脑。", "确定");
 		}
+		catch (CoordinatorCredentialException exception)
+		{
+			MobileDiagnostics.Log("send", exception);
+			await HandleCredentialRejectedAsync();
+		}
 		catch (Exception exception)
 		{
 			MobileDiagnostics.Log("send", exception);
-			await DisplayAlert("发送失败", exception.Message, "确定");
+			await DisplayAlert("发送失败", DescribeSendFailure(exception), "确定");
 		}
 		finally
 		{
@@ -285,13 +296,7 @@ public partial class MainPage : ContentPage
 					continue;
 				}
 
-				var progress = new Progress<TransferProgress>(value =>
-				{
-					var percentage = value.TotalBytes == 0
-						? 100
-						: (int)(value.BytesTransferred * 100 / value.TotalBytes);
-					TransferStatusLabel.Text = $"正在接收 {value.FileName} · {percentage}%";
-				});
+				var progress = new Progress<TransferProgress>(value => ReportProgress("正在接收", value));
 				var finalPath = await _client.DownloadAsync(transfer, destination, progress);
 				var share = await DisplayAlert(
 					"接收完成",
@@ -307,6 +312,11 @@ public partial class MainPage : ContentPage
 					});
 				}
 			}
+		}
+		catch (CoordinatorCredentialException exception)
+		{
+			MobileDiagnostics.Log("receive", exception);
+			await HandleCredentialRejectedAsync();
 		}
 		catch (Exception exception)
 		{
@@ -324,27 +334,181 @@ public partial class MainPage : ContentPage
 		_client?.Dispose();
 		_connection = connection;
 		_client = new LocalTransferClient(connection);
-		ConnectionStatusLabel.Text = "已连接";
+
+		ShowConnectedStatus();
 		ComputerNameLabel.Text = new Uri(connection.Endpoint).Host;
-		ComputerDetailLabel.Text = connection.Endpoint;
+
+		// The certificate fingerprint is the only thing that proves which computer is on the
+		// other end, so keep a short form of it visible next to the address.
+		var fingerprint = connection.CertificateSha256.Length > 12
+			? connection.CertificateSha256[..12]
+			: connection.CertificateSha256;
+		ComputerDetailLabel.Text = $"{connection.Endpoint} · 证书 {fingerprint}…";
+		PairButton.Text = "重新配对";
+		UnbindButton.IsVisible = true;
+		UpdateActions();
+	}
+
+	// ---------------------------------------------------------------- 连接状态外观
+
+	private void ShowConnectedStatus()
+	{
+		ConnectionStatusLabel.Text = "已连接";
+		ConnectionStatusLabel.TextColor = LookupColor("LtSuccessText", Color.FromArgb("#0F6B40"));
+		ConnectionStatusPill.BackgroundColor = LookupColor("LtSuccessSurface", Color.FromArgb("#E4F6EC"));
+	}
+
+	private void ShowDisconnectedStatus()
+	{
+		ConnectionStatusLabel.Text = "未连接";
+		ConnectionStatusLabel.TextColor = LookupColor("LtWarningText", Color.FromArgb("#8A610E"));
+		ConnectionStatusPill.BackgroundColor = LookupColor("LtWarningSurface", Color.FromArgb("#FFF5DC"));
+	}
+
+	private void ShowPairingStatus()
+	{
+		ConnectionStatusLabel.Text = "等待电脑批准…";
+		ConnectionStatusLabel.TextColor = LookupColor("LtTextSecondary", Color.FromArgb("#69758C"));
+		ConnectionStatusPill.BackgroundColor = LookupColor("LtNeutralSurface", Color.FromArgb("#EEF1F7"));
+	}
+
+	private static Color LookupColor(string key, Color fallback) =>
+		Application.Current?.Resources.TryGetValue(key, out var value) == true && value is Color color
+			? color
+			: fallback;
+
+	/// <summary>
+	/// One place that turns a progress report into both the bar and the caption, so the two can
+	/// never disagree about how far along a transfer is.
+	/// </summary>
+	private void ReportProgress(string verb, TransferProgress value)
+	{
+		var fraction = value.TotalBytes <= 0
+			? 1d
+			: Math.Clamp((double)value.BytesTransferred / value.TotalBytes, 0, 1);
+		TransferProgressBar.Progress = fraction;
+		TransferStatusLabel.Text = $"{verb} {value.FileName} · {(int)(fraction * 100)}%";
+	}
+
+	/// <summary>
+	/// The desktop answered 401: this phone's credential is no longer in its trusted-device
+	/// store, either because it was removed there or because a newer pairing replaced it.
+	/// Keeping that dead credential would make every later transfer fail with an opaque 401, so
+	/// drop it, return the screen to "not connected" and tell the user to pair again.
+	/// </summary>
+	private async Task HandleCredentialRejectedAsync()
+	{
+		MobileConnectionStore.Clear();
+		_client?.Dispose();
+		_client = null;
+		_connection = null;
+		// Stop OnAppearing from reloading a record that no longer exists.
+		_connectionLoadStarted = true;
+		ShowDisconnectedStatus();
+		ComputerNameLabel.Text = "未配对";
+		ComputerDetailLabel.Text = "请点右侧「配对」重新连接电脑";
+		PairButton.Text = "配对";
+		UnbindButton.IsVisible = false;
+		UpdateActions();
+		await DisplayAlert(
+			"配对凭据已失效",
+			"电脑已不再信任这台手机：可能是在电脑的「设备」页把本机移除了，或者这台手机在这台电脑上重新配对过。\n\n" +
+			"请点「配对」，重新扫描电脑上的二维码；配对完成后就能继续互传文件。",
+			"确定");
+	}
+
+	/// <summary>
+	/// Unpairing used to be possible only from the desktop. Letting the phone drop its own copy
+	/// of the credential is what makes "pair again from scratch" a repair the user can perform
+	/// on their own when the two ends disagree.
+	/// </summary>
+	private async void OnUnbindClicked(object sender, EventArgs e)
+	{
+		var confirmed = await DisplayAlert(
+			"解除配对",
+			"这台手机会删除保存在系统安全存储里的配对凭据。之后需要重新扫描电脑二维码才能互传文件。\n\n" +
+			"电脑上的「设备」列表里仍会保留这台设备的记录，可以在电脑上顺手移除。",
+			"解除",
+			"取消");
+		if (!confirmed)
+		{
+			return;
+		}
+
+		MobileConnectionStore.Clear();
+		_client?.Dispose();
+		_client = null;
+		_connection = null;
+		ShowDisconnectedStatus();
+		ComputerNameLabel.Text = "未配对";
+		ComputerDetailLabel.Text = "先在电脑上点「创建配对信息」，再用手机扫描二维码";
+		PairButton.Text = "配对";
+		UnbindButton.IsVisible = false;
 		UpdateActions();
 	}
 
 	private void SetBusy(bool isBusy, string status)
 	{
-		SendButton.IsEnabled = !isBusy && _client is not null && _selectedFiles.Count > 0;
-		ReceiveButton.IsEnabled = !isBusy && _client is not null;
-		PairButton.IsEnabled = !isBusy;
-		TransferStatusLabel.IsVisible = isBusy;
+		TransferStatusArea.IsVisible = isBusy;
+		TransferProgressBar.Progress = 0;
 		TransferStatusLabel.Text = status;
+		PairButton.IsEnabled = !isBusy;
+		UnbindButton.IsEnabled = !isBusy;
+
+		if (isBusy)
+		{
+			SendButton.IsEnabled = false;
+			ReceiveButton.IsEnabled = false;
+			return;
+		}
+
+		// Going idle after a send has to refresh the caption too: the queue was just cleared,
+		// so "发送 3 个文件到电脑" would otherwise stay on screen with nothing selected.
+		UpdateActions();
 	}
 
 	private void UpdateActions()
 	{
 		SendButton.IsEnabled = _client is not null && _selectedFiles.Count > 0;
-		SendButton.Text = _client is null ? "连接电脑后发送" : "发送到电脑";
+		SendButton.Text = _client is null
+			? "连接电脑后发送"
+			: _selectedFiles.Count == 0
+				? "发送到电脑"
+				: $"发送 {_selectedFiles.Count} 个文件到电脑";
 		ReceiveButton.IsEnabled = _client is not null;
 	}
+
+	/// <summary>
+	/// Pairing is the most common dead end on a phone, and the underlying exception messages are
+	/// English and technical. Translate the ones the user can actually act on.
+	/// </summary>
+	private static string DescribePairingFailure(Exception exception) => exception switch
+	{
+		TimeoutException =>
+			"电脑一直没有确认这次配对。配对信息只有 2 分钟有效期，超时后手机就停止等待了。\n\n" +
+			"请在电脑上点「创建配对信息」，再用手机重新扫码，并尽快在电脑弹出的确认框里点「是」。",
+		UnauthorizedAccessException =>
+			"电脑拒绝了这次配对，或者二维码已经失效。请让电脑重新生成配对信息后再扫一次。",
+		InvalidDataException =>
+			"没有读到有效的配对信息。请确认扫的是电脑上「创建配对信息」显示的二维码，" +
+			"也可以改用「粘贴配对信息」。",
+		_ => exception.Message,
+	};
+
+	/// <summary>
+	/// Sending has two dead ends that both come back as exceptions the user cannot read:
+	/// the desktop never answered its approval prompt, or it answered "no".
+	/// </summary>
+	private static string DescribeSendFailure(Exception exception) => exception switch
+	{
+		TransferRejectedException =>
+			"电脑没有接收这次发送：可能是电脑上的提示被点了「否」，也可能是提示一直没人点、自动失效了。\n\n" +
+			"请让电脑上「局域传输」保持运行，然后重新发送；电脑弹出提示后点「是」即可。",
+		TimeoutException =>
+			"电脑一直没有确认这次发送，手机已经停止等待了。\n\n" +
+			"请确认电脑上「局域传输」正在运行；弹出确认提示后尽快点「是」，然后重新发送。",
+		_ => exception.Message,
+	};
 
 	private static string FormatSize(long length)
 	{

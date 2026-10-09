@@ -16,6 +16,7 @@ using LocalTransfer.Coordinator.Pairing;
 using LocalTransfer.Coordinator.Transfers;
 using Microsoft.Win32;
 // WinForms is referenced by this project as well, so the WPF types below need explicit aliases.
+using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Button = System.Windows.Controls.Button;
 using Color = System.Windows.Media.Color;
@@ -48,7 +49,10 @@ public partial class MainWindow : Window
         _transfersRefreshTimer.Tick += OnTransfersRefreshTick;
 
         RefreshTrustedDevices();
-        ServiceStatusText.Text = $"本机服务 {_coordinator.Endpoint}";
+        ServiceStatusText.Text = _coordinator.IsRunning ? "服务运行中" : "服务未启动";
+        ServiceDot.Fill = TryFindResource(_coordinator.IsRunning ? "SuccessBrush" : "DangerBrush") as Brush
+                          ?? Brushes.Gray;
+        ServiceStatusText.ToolTip = $"本机服务地址：{_coordinator.Endpoint}";
         ShowPage(AppPage.Send);
     }
 
@@ -395,25 +399,60 @@ public partial class MainWindow : Window
         foreach (var transfer in _coordinator.OutboundTransfers.GetAll()
                      .Where(item => IsActiveTransfer(item.State)))
         {
-            OutboundRows.Add(new TransferRow(
-                transfer.Manifest.FileName,
-                $"{FindDeviceName(transfer.DeviceId)} · {DescribeState(transfer.State)}",
-                FormatSize(transfer.Manifest.Length)));
+            OutboundRows.Add(CreateTransferRow(transfer.Manifest, transfer.DeviceId, transfer.State));
         }
 
         InboundRows.Clear();
         foreach (var transfer in _coordinator.InboundTransfers.GetAll()
                      .Where(item => IsActiveTransfer(item.State)))
         {
-            InboundRows.Add(new TransferRow(
-                transfer.Manifest.FileName,
-                $"{FindDeviceName(transfer.DeviceId)} · {DescribeState(transfer.State)}",
-                FormatSize(transfer.Manifest.Length)));
+            InboundRows.Add(CreateTransferRow(
+                transfer.Manifest,
+                transfer.DeviceId,
+                transfer.State,
+                transfer.ExpiresAtUtc));
         }
 
         EmptyOutboundText.Visibility = OutboundRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyInboundText.Visibility = InboundRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private TransferRow CreateTransferRow(
+        FileManifest manifest,
+        Guid deviceId,
+        TransferState state,
+        DateTimeOffset expiresAtUtc = default) =>
+        new(
+            manifest.FileName,
+            $"{FindDeviceName(deviceId)} · {FormatSize(manifest.Length)}",
+            DescribeState(state, expiresAtUtc),
+            ResolveStateSurface(state),
+            ResolveStateForeground(state),
+            $"{manifest.ChunkCount} 个分块");
+
+    // The row carries its own brushes instead of relying on a converter so the same state text
+    // reads the same way everywhere, and stays legible in both the sent and received lists.
+    private static Brush ResolveStateSurface(TransferState state) => state switch
+    {
+        TransferState.Transferring or TransferState.Verifying =>
+            new SolidColorBrush(Color.FromRgb(0xFF, 0xF5, 0xDC)),
+        TransferState.Completed =>
+            new SolidColorBrush(Color.FromRgb(0xE4, 0xF6, 0xEC)),
+        TransferState.Failed or TransferState.Rejected or TransferState.Canceled =>
+            new SolidColorBrush(Color.FromRgb(0xFD, 0xEC, 0xEA)),
+        _ => new SolidColorBrush(Color.FromRgb(0xEE, 0xF1, 0xF7))
+    };
+
+    private static Brush ResolveStateForeground(TransferState state) => state switch
+    {
+        TransferState.Transferring or TransferState.Verifying =>
+            new SolidColorBrush(Color.FromRgb(0x8A, 0x61, 0x0E)),
+        TransferState.Completed =>
+            new SolidColorBrush(Color.FromRgb(0x0F, 0x6B, 0x40)),
+        TransferState.Failed or TransferState.Rejected or TransferState.Canceled =>
+            new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B)),
+        _ => new SolidColorBrush(Color.FromRgb(0x4F, 0x5E, 0x76))
+    };
 
     // Named "IsActiveTransfer" rather than "IsActive" to avoid hiding Window.IsActive.
     private static bool IsActiveTransfer(TransferState state) =>
@@ -424,20 +463,34 @@ public partial class MainWindow : Window
         TrustedDevices.FirstOrDefault(device => device.DeviceId == deviceId)?.DisplayName
         ?? "已移除的设备";
 
-    private static string DescribeState(TransferState state) => state switch
+    private static string DescribeState(TransferState state, DateTimeOffset expiresAtUtc = default)
     {
-        TransferState.WaitingForApproval => "等待在此电脑上确认",
-        TransferState.Queued => "已入队",
-        TransferState.Transferring => "传输中",
-        TransferState.Paused => "已暂停",
-        TransferState.WaitingForConnection => "等待手机连接",
-        TransferState.Verifying => "正在校验 SHA-256",
-        TransferState.Completed => "已完成",
-        TransferState.Failed => "失败",
-        TransferState.Rejected => "已拒绝",
-        TransferState.Canceled => "已取消",
-        _ => state.ToString()
-    };
+        // An unanswered prompt is not open-ended any more, so say how long is left instead of
+        // letting the row read as if it will wait forever.
+        if (state == TransferState.WaitingForApproval && expiresAtUtc != default)
+        {
+            var remaining = expiresAtUtc - DateTimeOffset.UtcNow;
+            if (remaining > TimeSpan.Zero)
+            {
+                return $"等待在此电脑上确认 · 还剩 {Math.Ceiling(remaining.TotalMinutes):0} 分钟";
+            }
+        }
+
+        return state switch
+        {
+            TransferState.WaitingForApproval => "等待在此电脑上确认",
+            TransferState.Queued => "已入队",
+            TransferState.Transferring => "传输中",
+            TransferState.Paused => "已暂停",
+            TransferState.WaitingForConnection => "等待手机连接",
+            TransferState.Verifying => "正在校验 SHA-256",
+            TransferState.Completed => "已完成",
+            TransferState.Failed => "失败",
+            TransferState.Rejected => "已拒绝",
+            TransferState.Canceled => "已取消",
+            _ => state.ToString()
+        };
+    }
 
     // ---------------------------------------------------------------- 历史记录
 
@@ -541,22 +594,47 @@ public partial class MainWindow : Window
 
     private async Task HandlePairingRequestAsync(PairingRequestInfo request)
     {
-        var result = MessageBox.Show(
-            $"是否信任设备？\n\n名称：{request.Device.DisplayName}\n平台：{request.Device.Platform}\n" +
-            $"设备ID：{request.Device.DeviceId}",
-            "设备配对请求",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
+        // The dialog counts down the phone's remaining patience instead of letting the user answer
+        // whenever: approving after it ran out produced a credential the phone never received,
+        // after which every transfer from that device failed with an opaque 401.
+        var deadline = request.ExpiresAtUtc == default
+            ? request.RequestedAtUtc.AddMinutes(2)
+            : request.ExpiresAtUtc;
 
-        if (result == MessageBoxResult.Yes)
+        var dialog = new PairingApprovalWindow(request, deadline) { Owner = this };
+        var approved = dialog.ShowDialog() == true;
+
+        if (dialog.TimedOut)
         {
-            await _coordinator.Pairing.ApproveAsync(request.RequestId);
-            RefreshTrustedDevices();
+            MessageBox.Show(
+                "没有来得及确认：手机已经停止等待了。\n\n" +
+                "请在手机上重新点「配对」扫描电脑上的二维码，然后尽快在弹出的窗口里点「信任此设备」。",
+                "配对已超时",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
         }
-        else
+
+        if (!approved)
         {
             _coordinator.Pairing.Reject(request.RequestId);
+            return;
         }
+
+        if (await _coordinator.Pairing.ApproveAsync(request.RequestId))
+        {
+            RefreshTrustedDevices();
+            return;
+        }
+
+        // ApproveAsync refuses once the request expired, so a late click must not look like
+        // success — otherwise the user believes the phone was added while it was not.
+        MessageBox.Show(
+            "这次配对没有完成：手机已经不再等待确认了。\n\n" +
+            "请在手机上重新点「配对」并扫描电脑上的二维码，然后尽快在弹出的窗口里点「信任此设备」。",
+            "配对未完成",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
     private void DispatchSafe(Func<Task> operation)
@@ -613,6 +691,11 @@ public partial class MainWindow : Window
                 ? 0
                 : -1;
 
+        // Keep the header counter and the first-run guidance in step with the device list.
+        DeviceCountText.Text = $"{TrustedDevices.Count} 台设备";
+        PairingCallout.Visibility = TrustedDevices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        DevicePickerCard.Visibility = TrustedDevices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
         RefreshDeviceRows();
         UpdateSendButton();
     }
@@ -632,32 +715,53 @@ public partial class MainWindow : Window
     private async Task HandleTransferOfferAsync(InboundTransferInfo transfer)
     {
         var device = TrustedDevices.FirstOrDefault(item => item.DeviceId == transfer.DeviceId);
+        var deadline = transfer.ExpiresAtUtc == default
+            ? DateTimeOffset.UtcNow + TimeSpan.FromMinutes(10)
+            : transfer.ExpiresAtUtc;
+        var remaining = deadline - DateTimeOffset.UtcNow;
+        var patienceNote = remaining > TimeSpan.Zero
+            ? $"手机只等待大约 {(int)Math.Ceiling(remaining.TotalMinutes)} 分钟，超过后这次发送会自动取消。\n\n"
+            : string.Empty;
+
         var result = MessageBox.Show(
             $"是否接收文件？\n\n设备：{device?.DisplayName ?? transfer.DeviceId.ToString()}\n" +
             $"文件：{transfer.Manifest.FileName}\n大小：{FormatSize(transfer.Manifest.Length)}\n\n" +
+            patienceNote +
             "文件通过 SHA-256 校验后才会保存到下载目录。",
             "文件接收请求",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
 
-        if (result == MessageBoxResult.Yes)
-        {
-            try
-            {
-                await _coordinator.InboundTransfers.ApproveAsync(transfer.TransferId);
-            }
-            catch (Exception exception)
-            {
-                MessageBox.Show(
-                    $"无法准备接收文件：{exception.Message}",
-                    "文件接收失败",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-            }
-        }
-        else
+        if (result != MessageBoxResult.Yes)
         {
             await _coordinator.InboundTransfers.RejectAsync(transfer.TransferId);
+            return;
+        }
+
+        try
+        {
+            // ApproveAsync refuses once the offer has expired, so a late "yes" must not be
+            // reported as success — otherwise the file appears to be on its way while the
+            // phone has already given up.
+            if (await _coordinator.InboundTransfers.ApproveAsync(transfer.TransferId))
+            {
+                return;
+            }
+
+            MessageBox.Show(
+                "这次接收没有完成：手机已经不再等待了。\n\n" +
+                "在手机上重新点「发送」即可再来一次；只要你在手机开始等待前点「是」，就能正常接收。",
+                "接收请求已失效",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"无法准备接收文件：{exception.Message}",
+                "文件接收失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
     }
 
@@ -699,6 +803,9 @@ public sealed record TrustedDeviceRow(
 public sealed record TransferRow(
     string FileName,
     string DetailText,
+    string StateText,
+    Brush StateSurface,
+    Brush StateForeground,
     string SizeText);
 
 public sealed record ReceivedFileRow(

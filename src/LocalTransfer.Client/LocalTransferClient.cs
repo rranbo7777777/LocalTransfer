@@ -208,7 +208,8 @@ public sealed class LocalTransferClient : IDisposable
 
             if (transfer.State == TransferState.Rejected)
             {
-                throw new UnauthorizedAccessException("The computer rejected the file transfer.");
+                // Covers both "the user clicked 否" and "the prompt timed out unanswered".
+                throw new TransferRejectedException();
             }
 
             if (transfer.State is TransferState.Failed or TransferState.Canceled)
@@ -235,6 +236,16 @@ public sealed class LocalTransferClient : IDisposable
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken);
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    // The device is no longer in the desktop's trusted-device store: the user
+                    // removed it, or a newer pairing replaced the credential. Retrying cannot
+                    // succeed, and the generic status-code exception is unreadable on a phone,
+                    // so surface a dedicated type the UI can turn into "pair again".
+                    response.Dispose();
+                    throw new CoordinatorCredentialException();
+                }
+
                 if (attempt < 3 && IsTransient(response.StatusCode))
                 {
                     response.Dispose();

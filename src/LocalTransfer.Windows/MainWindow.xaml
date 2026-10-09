@@ -7,63 +7,29 @@
         MinWidth="920"
         MinHeight="600"
         WindowStartupLocation="CenterScreen"
-        Background="#F4F6FA">
-    <Window.Resources>
-        <Style x:Key="SidebarButton" TargetType="Button">
-            <Setter Property="Height" Value="42" />
-            <Setter Property="Margin" Value="12,3" />
-            <Setter Property="Padding" Value="16,0" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="Foreground" Value="#DCE4F5" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="Cursor" Value="Hand" />
-        </Style>
-        <Style x:Key="PrimaryButton" TargetType="Button">
-            <Setter Property="Height" Value="40" />
-            <Setter Property="Padding" Value="18,0" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="Background" Value="#356AE6" />
-            <Setter Property="BorderBrush" Value="#356AE6" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-        </Style>
-        <Style x:Key="SecondaryButton" TargetType="Button">
-            <Setter Property="Height" Value="40" />
-            <Setter Property="Padding" Value="18,0" />
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#CFD6E4" />
-        </Style>
-        <Style x:Key="CardBorder" TargetType="Border">
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#E1E5ED" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Padding" Value="18" />
-        </Style>
-    </Window.Resources>
-
+        Background="{StaticResource PageBackgroundBrush}">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="200" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0" Background="#17233C">
+        <!-- ================================================ 侧边导航 -->
+        <Border Grid.Column="0" Background="{StaticResource SidebarBackgroundBrush}">
             <DockPanel LastChildFill="True">
                 <StackPanel DockPanel.Dock="Top" Margin="0,24,0,0">
                     <TextBlock Margin="24,0,0,24" Foreground="White" FontSize="21"
                                FontWeight="SemiBold" Text="局域传输" />
-                    <!-- Real navigation: every entry switches the content pane below. -->
-                    <Button x:Name="NavSendButton" Style="{StaticResource SidebarButton}"
+                    <!-- Every entry switches the content pane; the active one is highlighted in code. -->
+                    <Button x:Name="NavSendButton" Style="{StaticResource NavButton}"
                             Content="发送文件" Click="OnNavClicked" />
-                    <Button x:Name="NavDevicesButton" Style="{StaticResource SidebarButton}"
+                    <Button x:Name="NavDevicesButton" Style="{StaticResource NavButton}"
                             Content="设备" Click="OnNavClicked" />
-                    <Button x:Name="NavTransfersButton" Style="{StaticResource SidebarButton}"
+                    <Button x:Name="NavTransfersButton" Style="{StaticResource NavButton}"
                             Content="传输任务" Click="OnNavClicked" />
-                    <Button x:Name="NavHistoryButton" Style="{StaticResource SidebarButton}"
+                    <Button x:Name="NavHistoryButton" Style="{StaticResource NavButton}"
                             Content="历史记录" Click="OnNavClicked" />
-                    <Button x:Name="NavSettingsButton" Style="{StaticResource SidebarButton}"
+                    <Button x:Name="NavSettingsButton" Style="{StaticResource NavButton}"
                             Content="设置" Click="OnNavClicked" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="24,0,24,22">
@@ -73,6 +39,7 @@
             </DockPanel>
         </Border>
 
+        <!-- ================================================ 内容区 -->
         <Grid Grid.Column="1" Margin="34,28">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -85,19 +52,29 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock x:Name="PageTitleText" FontSize="26" FontWeight="SemiBold"
-                               Foreground="#17233C" Text="发送文件" />
-                    <TextBlock x:Name="PageSubtitleText" Margin="0,7,0,0" Foreground="#69758C"
-                               TextWrapping="Wrap"
-                               Text="电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。手机 → 电脑：在手机上发送后，这里会弹窗让你确认。" />
+                    <TextBlock x:Name="PageTitleText" Style="{StaticResource PageTitleText}"
+                               Text="发送文件" />
+                    <TextBlock x:Name="PageSubtitleText" Style="{StaticResource PageSubtitleText}"
+                               MaxWidth="640" HorizontalAlignment="Left"
+                               Text="电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。" />
                 </StackPanel>
-                <Border Grid.Column="1" Padding="12,7" Background="#FFF5DC" CornerRadius="16">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Width="8" Height="8" Margin="0,0,7,0" Fill="#E9A11B" />
-                        <TextBlock x:Name="ServiceStatusText" VerticalAlignment="Center"
-                                   Foreground="#8A610E" Text="协调服务启动中" />
-                    </StackPanel>
-                </Border>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Border Padding="12,7" Background="{StaticResource NeutralSurfaceBrush}"
+                            CornerRadius="16">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="ServiceDot" Width="8" Height="8" Margin="0,0,7,0"
+                                     Fill="{StaticResource WarningBrush}" />
+                            <TextBlock x:Name="ServiceStatusText" VerticalAlignment="Center"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       Text="协调服务启动中" />
+                        </StackPanel>
+                    </Border>
+                    <Border Margin="10,0,0,0" Padding="12,7" Background="{StaticResource NeutralSurfaceBrush}"
+                            CornerRadius="16">
+                        <TextBlock x:Name="DeviceCountText" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Text="0 台设备" />
+                    </Border>
+                </StackPanel>
             </Grid>
 
             <Grid Grid.Row="1" Margin="0,25,0,0">
@@ -107,12 +84,37 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" Padding="18" Background="White"
-                            BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                    <!-- 未配对时的首要引导：把「先做这一步」讲清楚 -->
+                    <Border x:Name="PairingCallout" Grid.Row="0" Margin="0,0,0,18" Padding="18"
+                            Background="{StaticResource AccentSoftBrush}"
+                            BorderBrush="{StaticResource AccentOutlineBrush}"
+                            BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           Text="第一步：先与手机配对" />
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           Text="点右侧「创建配对信息」显示二维码，用手机扫描，再在电脑弹出的窗口里点「信任此设备」。配对完成后即可互传文件。每台手机只需做一次。" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Click="OnCreatePairingClicked" Content="创建配对信息" />
+                        </Grid>
+                    </Border>
+
+                    <!-- 目标设备选择 -->
+                    <Border x:Name="DevicePickerCard" Grid.Row="1" Style="{StaticResource CardBorder}">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
@@ -126,42 +128,49 @@
                                       SelectionChanged="OnDeviceSelectionChanged" />
                             <TextBlock x:Name="PairingHintText" Grid.Column="2" Margin="18,0,0,0"
                                        VerticalAlignment="Center" TextWrapping="Wrap"
-                                       Foreground="#7A8598" Text="完成安全配对后才能开始传输" />
+                                       Foreground="{StaticResource TextSubtleBrush}"
+                                       Text="完成配对后才能开始传输" />
                             <Button Grid.Column="3" Margin="14,0,0,0" Click="OnCreatePairingClicked"
-                                    Style="{StaticResource SecondaryButton}" Content="创建配对信息" />
+                                    Style="{StaticResource SecondaryButton}" Content="再配对一台手机" />
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1" Margin="0,18,0,0" Padding="24" AllowDrop="True"
-                            Background="#F9FBFF" BorderBrush="#9CB3E8" BorderThickness="1" CornerRadius="8"
+                    <!-- 拖放区 -->
+                    <Border Grid.Row="2" Margin="0,18,0,0" Padding="24" AllowDrop="True"
+                            Background="{StaticResource AccentSoftBrush}"
+                            BorderBrush="{StaticResource AccentOutlineBrush}"
+                            BorderThickness="1" CornerRadius="8"
                             DragOver="OnFilesDragOver" Drop="OnFilesDropped">
                         <StackPanel HorizontalAlignment="Center">
-                            <TextBlock HorizontalAlignment="Center" Foreground="#356AE6" FontSize="34"
-                                       FontWeight="Light" Text="＋" />
+                            <TextBlock HorizontalAlignment="Center" Foreground="{StaticResource AccentBrush}"
+                                       FontSize="34" FontWeight="Light" Text="＋" />
                             <TextBlock Margin="0,4,0,0" HorizontalAlignment="Center" FontSize="16"
                                        FontWeight="SemiBold" Text="拖放文件到这里" />
-                            <TextBlock Margin="0,6,0,12" HorizontalAlignment="Center" Foreground="#7A8598"
+                            <TextBlock Margin="0,6,0,12" HorizontalAlignment="Center"
+                                       Foreground="{StaticResource TextSubtleBrush}"
                                        Text="支持多选；不会读取文件内容，直到你确认发送" />
-                            <Button Click="OnChooseFilesClicked" Style="{StaticResource SecondaryButton}" Content="选择文件" />
+                            <Button Click="OnChooseFilesClicked" Style="{StaticResource SecondaryButton}"
+                                    Content="选择文件" />
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Row="2" Margin="0,18,0,0" Padding="18" Background="White"
-                            BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                    <!-- 待发送列表 -->
+                    <Border Grid.Row="3" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <DockPanel>
-                                <TextBlock FontSize="15" FontWeight="SemiBold" Text="待发送文件" />
-                                <Button DockPanel.Dock="Right" Padding="10,3" Click="OnClearFilesClicked"
-                                        Background="Transparent" BorderThickness="0" Foreground="#67748A" Content="清空" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
+                                        Click="OnClearFilesClicked" Content="清空" />
+                                <TextBlock Style="{StaticResource SectionTitleText}" Text="待发送文件" />
                             </DockPanel>
                             <Grid Grid.Row="1" Margin="0,12,0,0">
-                                <TextBlock x:Name="EmptyQueueText" HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" Foreground="#9AA4B6" Text="尚未选择文件" />
-                                <ListBox ItemsSource="{Binding PendingFiles}" BorderThickness="0" Background="Transparent">
+                                <TextBlock x:Name="EmptyQueueText" Style="{StaticResource EmptyStateText}"
+                                           Text="尚未选择文件" />
+                                <ListBox ItemsSource="{Binding PendingFiles}" BorderThickness="0"
+                                         Background="Transparent">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <Grid Margin="0,5">
@@ -172,10 +181,12 @@
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
                                                                TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
-                                                               Text="{Binding DirectoryName}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource MutedText}" Margin="0,3,0,0"
+                                                               Text="{Binding DirectoryName}"
+                                                               TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
-                                                <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
+                                                <TextBlock Grid.Column="1" Margin="20,0,0,0"
+                                                           VerticalAlignment="Center"
                                                            Foreground="#647087" Text="{Binding SizeText}" />
                                             </Grid>
                                         </DataTemplate>
@@ -185,13 +196,13 @@
                         </Grid>
                     </Border>
 
-                    <Grid Grid.Row="3" Margin="0,18,0,0">
+                    <Grid Grid.Row="4" Margin="0,18,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="QueueSummaryText" VerticalAlignment="Center"
-                                   Foreground="#69758C" Text="0 个文件" />
+                                   Foreground="{StaticResource TextSecondaryBrush}" Text="0 个文件" />
                         <Button x:Name="SendButton" Grid.Column="1" Width="130" IsEnabled="False"
                                 Click="OnSendClicked" Style="{StaticResource PrimaryButton}" Content="发送"
                                 ToolTip="把「待发送文件」加入发送队列，手机会主动下载" />
@@ -206,19 +217,18 @@
                     </Grid.RowDefinitions>
                     <Border Grid.Row="0" Style="{StaticResource CardBorder}">
                         <DockPanel>
-                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
-                                    Click="OnRefreshDevicesClicked" Style="{StaticResource SecondaryButton}"
+                            <Button DockPanel.Dock="Right" Margin="14,0,0,0"
+                                    Click="OnRefreshDevicesClicked" Style="{StaticResource ToolbarButton}"
                                     Content="刷新" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
-                                       Text="已配对、可直接互传的设备。移除后该设备需要重新扫码配对。" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       Text="已配对、可直接互传的设备。移除后该设备需要重新扫码配对，请确认你删的是不再使用的那台。" />
                         </DockPanel>
                     </Border>
                     <Border Grid.Row="1" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
                         <Grid>
-                            <TextBlock x:Name="EmptyDevicesText" HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                                       Foreground="#9AA4B6"
-                                       Text="还没有配对过的设备。回到「发送文件」，点「创建配对信息」后用手机扫码。" />
+                            <TextBlock x:Name="EmptyDevicesText" Style="{StaticResource EmptyStateText}"
+                                       Text="还没有配对过的设备。&#x0a;回到「发送文件」点「创建配对信息」，用手机扫码并在电脑上确认。" />
                             <ListBox ItemsSource="{Binding TrustedDeviceRows}" BorderThickness="0"
                                      Background="Transparent">
                                 <ListBox.ItemTemplate>
@@ -231,13 +241,12 @@
                                             <StackPanel>
                                                 <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}"
                                                            TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                <TextBlock Style="{StaticResource MutedText}" Margin="0,3,0,0"
                                                            Text="{Binding DetailText}" TextWrapping="Wrap" />
                                             </StackPanel>
-                                            <Button Grid.Column="1" Margin="20,0,0,0" Padding="12,3"
-                                                    VerticalAlignment="Center" Click="OnRemoveDeviceClicked"
-                                                    Background="Transparent" BorderThickness="0"
-                                                    Foreground="#C0392B" Content="移除"
+                                            <Button Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
+                                                    Click="OnRemoveDeviceClicked"
+                                                    Style="{StaticResource DangerGhostButton}" Content="移除"
                                                     ToolTip="撤销该设备的信任，之后需要重新配对" />
                                         </Grid>
                                     </DataTemplate>
@@ -256,10 +265,11 @@
                     </Grid.RowDefinitions>
                     <Border Grid.Row="0" Style="{StaticResource CardBorder}">
                         <DockPanel>
-                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
-                                    Click="OnRefreshTransfersClicked" Style="{StaticResource SecondaryButton}"
+                            <Button DockPanel.Dock="Right" Margin="14,0,0,0"
+                                    Click="OnRefreshTransfersClicked" Style="{StaticResource ToolbarButton}"
                                     Content="刷新" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
                                        Text="进行中的传输。发送队列只保存在内存里，退出程序后需要重新排队。" />
                         </DockPanel>
                     </Border>
@@ -270,10 +280,9 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="待发送 · 电脑 → 手机" />
+                            <TextBlock Style="{StaticResource SectionTitleText}" Text="待发送 · 电脑 → 手机" />
                             <Grid Grid.Row="1" Margin="0,10,0,0">
-                                <TextBlock x:Name="EmptyOutboundText" HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" Foreground="#9AA4B6"
+                                <TextBlock x:Name="EmptyOutboundText" Style="{StaticResource EmptyStateText}"
                                            Text="没有待发送的文件" />
                                 <ListBox ItemsSource="{Binding OutboundRows}" BorderThickness="0"
                                          Background="Transparent">
@@ -287,11 +296,23 @@
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
                                                                TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
-                                                               Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource MutedText}" Margin="0,3,0,0"
+                                                               Text="{Binding DetailText}"
+                                                               TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
-                                                <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
-                                                           Foreground="#647087" Text="{Binding SizeText}" />
+                                                <StackPanel Grid.Column="1" Margin="20,0,0,0"
+                                                            VerticalAlignment="Center">
+                                                    <Border HorizontalAlignment="Right" Padding="9,3"
+                                                            Background="{Binding StateSurface}"
+                                                            CornerRadius="10">
+                                                        <TextBlock FontSize="11"
+                                                                   Foreground="{Binding StateForeground}"
+                                                                   Text="{Binding StateText}" />
+                                                    </Border>
+                                                    <TextBlock Margin="0,4,0,0" HorizontalAlignment="Right"
+                                                               Foreground="#647087" FontSize="12"
+                                                               Text="{Binding SizeText}" />
+                                                </StackPanel>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -306,10 +327,9 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="待接收 · 手机 → 电脑" />
+                            <TextBlock Style="{StaticResource SectionTitleText}" Text="待接收 · 手机 → 电脑" />
                             <Grid Grid.Row="1" Margin="0,10,0,0">
-                                <TextBlock x:Name="EmptyInboundText" HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" Foreground="#9AA4B6"
+                                <TextBlock x:Name="EmptyInboundText" Style="{StaticResource EmptyStateText}"
                                            Text="没有待接收的文件" />
                                 <ListBox ItemsSource="{Binding InboundRows}" BorderThickness="0"
                                          Background="Transparent">
@@ -323,11 +343,23 @@
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
                                                                TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
-                                                               Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource MutedText}" Margin="0,3,0,0"
+                                                               Text="{Binding DetailText}"
+                                                               TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
-                                                <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
-                                                           Foreground="#647087" Text="{Binding SizeText}" />
+                                                <StackPanel Grid.Column="1" Margin="20,0,0,0"
+                                                            VerticalAlignment="Center">
+                                                    <Border HorizontalAlignment="Right" Padding="9,3"
+                                                            Background="{Binding StateSurface}"
+                                                            CornerRadius="10">
+                                                        <TextBlock FontSize="11"
+                                                                   Foreground="{Binding StateForeground}"
+                                                                   Text="{Binding StateText}" />
+                                                    </Border>
+                                                    <TextBlock Margin="0,4,0,0" HorizontalAlignment="Right"
+                                                               Foreground="#647087" FontSize="12"
+                                                               Text="{Binding SizeText}" />
+                                                </StackPanel>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -345,21 +377,21 @@
                     </Grid.RowDefinitions>
                     <Border Grid.Row="0" Style="{StaticResource CardBorder}">
                         <DockPanel>
-                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
-                                    Click="OnOpenReceiveFolderClicked" Style="{StaticResource SecondaryButton}"
+                            <Button DockPanel.Dock="Right" Margin="14,0,0,0"
+                                    Click="OnOpenReceiveFolderClicked" Style="{StaticResource ToolbarButton}"
                                     Content="打开文件夹" />
-                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
-                                    Click="OnRefreshHistoryClicked" Style="{StaticResource SecondaryButton}"
+                            <Button DockPanel.Dock="Right" Margin="14,0,0,0"
+                                    Click="OnRefreshHistoryClicked" Style="{StaticResource ToolbarButton}"
                                     Content="刷新" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
                                        Text="电脑已经收到的文件。传输中的临时文件不会出现在这里。" />
                         </DockPanel>
                     </Border>
                     <Border Grid.Row="1" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
                         <Grid>
-                            <TextBlock x:Name="EmptyHistoryText" HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                                       Foreground="#9AA4B6" Text="还没有收到过文件" />
+                            <TextBlock x:Name="EmptyHistoryText" Style="{StaticResource EmptyStateText}"
+                                       Text="还没有收到过文件" />
                             <ListBox ItemsSource="{Binding ReceivedRows}" BorderThickness="0"
                                      Background="Transparent">
                                 <ListBox.ItemTemplate>
@@ -372,14 +404,15 @@
                                             <StackPanel>
                                                 <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
                                                            TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
-                                                           Text="{Binding FullPath}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Style="{StaticResource MutedText}" Margin="0,3,0,0"
+                                                           Text="{Binding FullPath}"
+                                                           TextTrimming="CharacterEllipsis" />
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" Margin="20,0,0,0">
                                                 <TextBlock HorizontalAlignment="Right" Foreground="#647087"
                                                            Text="{Binding SizeText}" />
-                                                <TextBlock Margin="0,3,0,0" HorizontalAlignment="Right"
-                                                           Foreground="#8A94A6" FontSize="12"
+                                                <TextBlock Style="{StaticResource MutedText}" Margin="0,3,0,0"
+                                                           HorizontalAlignment="Right"
                                                            Text="{Binding TimeText}" />
                                             </StackPanel>
                                         </Grid>
@@ -397,43 +430,45 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <Border Grid.Row="0" Style="{StaticResource CardBorder}">
-                        <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
                                    Text="以下信息当前为只读。端口与目录在程序启动时确定。" />
                     </Border>
-                    <Border Grid.Row="1" Margin="0,18,0,0" Padding="24" Background="White"
-                            BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                    <Border Grid.Row="1" Margin="0,18,0,0" Style="{StaticResource CardBorder}" Padding="24">
                         <StackPanel>
                             <TextBlock FontWeight="SemiBold" Text="服务地址（手机配对时使用）" />
-                            <TextBlock x:Name="SettingEndpointText" Margin="0,4,0,16" Foreground="#3D4A61"
-                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="SettingEndpointText" Margin="0,4,0,16"
+                                       Style="{StaticResource BodyText}" />
 
                             <TextBlock FontWeight="SemiBold" Text="监听端口" />
-                            <TextBlock x:Name="SettingPortText" Margin="0,4,0,16" Foreground="#3D4A61" />
+                            <TextBlock x:Name="SettingPortText" Margin="0,4,0,16"
+                                       Style="{StaticResource BodyText}" />
 
                             <TextBlock FontWeight="SemiBold" Text="接收目录（手机发来的文件保存在这里）" />
                             <DockPanel Margin="0,4,0,16">
-                                <Button DockPanel.Dock="Right" Height="30" Margin="12,0,0,0" Padding="12,0"
-                                        Click="OnOpenReceiveFolderClicked" Style="{StaticResource SecondaryButton}"
-                                        Content="打开" />
+                                <Button DockPanel.Dock="Right" Height="30" Margin="12,0,0,0"
+                                        Click="OnOpenReceiveFolderClicked"
+                                        Style="{StaticResource ToolbarButton}" Content="打开" />
                                 <TextBlock x:Name="SettingReceiveDirText" VerticalAlignment="Center"
-                                           Foreground="#3D4A61" TextWrapping="Wrap" />
+                                           Style="{StaticResource BodyText}" />
                             </DockPanel>
 
                             <TextBlock FontWeight="SemiBold" Text="数据目录（可信设备与证书）" />
                             <DockPanel Margin="0,4,0,16">
-                                <Button DockPanel.Dock="Right" Height="30" Margin="12,0,0,0" Padding="12,0"
-                                        Click="OnOpenDataFolderClicked" Style="{StaticResource SecondaryButton}"
-                                        Content="打开" />
+                                <Button DockPanel.Dock="Right" Height="30" Margin="12,0,0,0"
+                                        Click="OnOpenDataFolderClicked"
+                                        Style="{StaticResource ToolbarButton}" Content="打开" />
                                 <TextBlock x:Name="SettingDataDirText" VerticalAlignment="Center"
-                                           Foreground="#3D4A61" TextWrapping="Wrap" />
+                                           Style="{StaticResource BodyText}" />
                             </DockPanel>
 
                             <TextBlock FontWeight="SemiBold" Text="服务证书 SHA-256 指纹" />
-                            <TextBlock x:Name="SettingCertText" Margin="0,4,0,16" Foreground="#3D4A61"
-                                       TextWrapping="Wrap" FontFamily="Consolas" />
+                            <TextBlock x:Name="SettingCertText" Margin="0,4,0,16" TextWrapping="Wrap"
+                                       FontFamily="Consolas" Foreground="#3D4A61" />
 
                             <TextBlock FontWeight="SemiBold" Text="协议版本" />
-                            <TextBlock x:Name="SettingProtocolText" Margin="0,4,0,0" Foreground="#3D4A61" />
+                            <TextBlock x:Name="SettingProtocolText" Margin="0,4,0,0"
+                                       Style="{StaticResource BodyText}" />
                         </StackPanel>
                     </Border>
                 </Grid>

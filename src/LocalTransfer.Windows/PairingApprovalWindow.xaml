@@ -1,0 +1,80 @@
+<Window x:Class="LocalTransfer.Windows.PairingApprovalWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="设备配对请求"
+        Width="470"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#F4F6FA">
+    <Grid Margin="26,24,26,22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock FontSize="20" FontWeight="SemiBold" Foreground="#17233C"
+                       Text="是否信任这台设备？" />
+            <TextBlock Margin="0,7,0,0" TextWrapping="Wrap" Foreground="#69758C"
+                       Text="允许后，这台设备可以直接与你互传文件，无需再次确认。" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Margin="0,18,0,0" Padding="16" Background="White"
+                BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="64" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Foreground="#8A94A6" Text="名称" />
+                <TextBlock x:Name="DeviceNameText" Grid.Row="0" Grid.Column="1"
+                           FontWeight="SemiBold" Foreground="#17233C" TextWrapping="Wrap" />
+
+                <TextBlock Grid.Row="1" Margin="0,9,0,0" Foreground="#8A94A6" Text="平台" />
+                <TextBlock x:Name="DevicePlatformText" Grid.Row="1" Grid.Column="1" Margin="0,9,0,0"
+                           Foreground="#3D4A61" TextWrapping="Wrap" />
+
+                <TextBlock Grid.Row="2" Margin="0,9,0,0" Foreground="#8A94A6" Text="标识" />
+                <TextBlock x:Name="DeviceIdText" Grid.Row="2" Grid.Column="1" Margin="0,9,0,0"
+                           FontFamily="Consolas" FontSize="12" Foreground="#5A657A"
+                           TextWrapping="Wrap" />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="2" Margin="0,18,0,0">
+            <DockPanel>
+                <TextBlock x:Name="CountdownText" DockPanel.Dock="Right" FontWeight="SemiBold"
+                           Foreground="#356AE6" Text="--:--" />
+                <TextBlock Foreground="#69758C" Text="手机剩余等待时间" />
+            </DockPanel>
+            <ProgressBar x:Name="CountdownBar" Margin="0,8,0,0" Style="{StaticResource ThinProgress}"
+                         Minimum="0" Maximum="1" Value="1" />
+            <TextBlock x:Name="CountdownHintText" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                       Foreground="#8A94A6"
+                       Text="超过这个时间，手机就会停止等待，本次配对作废——到时候需要让手机重新扫码。" />
+        </StackPanel>
+
+        <Grid Grid.Row="3" Margin="0,22,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="1" Style="{StaticResource SecondaryButton}"
+                    Click="OnRejectClicked" Content="拒绝" />
+            <Button x:Name="ApproveButton" Grid.Column="2" Margin="12,0,0,0"
+                    Style="{StaticResource PrimaryButton}" IsDefault="True"
+                    Click="OnApproveClicked" Content="信任此设备" />
+        </Grid>
+    </Grid>
+</Window>

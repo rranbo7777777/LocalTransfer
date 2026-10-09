@@ -40,14 +40,21 @@ public sealed class PairingTicketService
         }
     }
 
-    public bool TryConsume(string secret)
+    public bool TryConsume(string secret) => TryConsume(secret, out _);
+
+    /// <summary>
+    /// Consumes a one-time ticket and reports when it was due to expire. Callers need that
+    /// deadline to refuse work that only becomes possible after the client stopped waiting.
+    /// </summary>
+    public bool TryConsume(string secret, out DateTimeOffset expiresAtUtc)
     {
+        expiresAtUtc = default;
         if (string.IsNullOrWhiteSpace(secret))
         {
             return false;
         }
 
-        return _tickets.TryRemove(Hash(secret), out var expiresAtUtc) && expiresAtUtc > _clock.UtcNow;
+        return _tickets.TryRemove(Hash(secret), out expiresAtUtc) && expiresAtUtc > _clock.UtcNow;
     }
 
     private void RemoveExpiredTickets()

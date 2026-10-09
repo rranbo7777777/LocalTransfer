@@ -1,0 +1,149 @@
+﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xaml-comp compile="true" ?>
+<!--
+    Palette and control styles shared by the phone UI. The colours deliberately match
+    LocalTransfer.Windows/Styles.xaml so both ends of a transfer look like the same product.
+
+    StrokeShape is intentionally NOT set from a style: a Style setter hands out the same
+    RoundRectangle instance to every Border, so each Border declares its own shape instead.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+
+    <Color x:Key="LtPageBackground">#F4F6FA</Color>
+    <Color x:Key="LtCardBackground">#FFFFFF</Color>
+    <Color x:Key="LtCardStroke">#E1E5ED</Color>
+    <Color x:Key="LtAccent">#356AE6</Color>
+    <Color x:Key="LtAccentSoft">#F9FBFF</Color>
+    <Color x:Key="LtAccentOutline">#9CB3E8</Color>
+    <Color x:Key="LtTextPrimary">#17233C</Color>
+    <Color x:Key="LtTextStrong">#303A4D</Color>
+    <Color x:Key="LtTextSecondary">#69758C</Color>
+    <Color x:Key="LtTextMuted">#9AA4B6</Color>
+    <Color x:Key="LtSuccessSurface">#E4F6EC</Color>
+    <Color x:Key="LtSuccessText">#0F6B40</Color>
+    <Color x:Key="LtWarningSurface">#FFF5DC</Color>
+    <Color x:Key="LtWarningText">#8A610E</Color>
+    <Color x:Key="LtDangerSurface">#FDECEA</Color>
+    <Color x:Key="LtDangerText">#C0392B</Color>
+    <Color x:Key="LtNeutralSurface">#EEF1F7</Color>
+    <Color x:Key="LtTrack">#E3E9F5</Color>
+
+    <!-- ============================================================ 文本 -->
+    <Style x:Key="LtPageTitle" TargetType="Label">
+        <Setter Property="FontSize" Value="24" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextPrimary}" />
+    </Style>
+
+    <Style x:Key="LtPageSubtitle" TargetType="Label">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextSecondary}" />
+    </Style>
+
+    <Style x:Key="LtSectionTitle" TargetType="Label">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextPrimary}" />
+    </Style>
+
+    <Style x:Key="LtFieldLabel" TargetType="Label">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextMuted}" />
+    </Style>
+
+    <Style x:Key="LtBody" TargetType="Label">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextStrong}" />
+    </Style>
+
+    <Style x:Key="LtMuted" TargetType="Label">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextMuted}" />
+    </Style>
+
+    <!-- 列表为空/未就绪时的居中说明 -->
+    <Style x:Key="LtEmptyHint" TargetType="Label">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="HorizontalTextAlignment" Value="Center" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextMuted}" />
+    </Style>
+
+    <Style x:Key="LtDirectionLabel" TargetType="Label">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextMuted}" />
+        <Setter Property="Margin" Value="4,0,0,5" />
+    </Style>
+
+    <!-- ============================================================ 容器 -->
+    <Style x:Key="LtCard" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{StaticResource LtCardBackground}" />
+        <Setter Property="Stroke" Value="{StaticResource LtCardStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style x:Key="LtStatusPill" TargetType="Border">
+        <Setter Property="Padding" Value="11,5" />
+        <Setter Property="BackgroundColor" Value="{StaticResource LtWarningSurface}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="VerticalOptions" Value="Start" />
+    </Style>
+
+    <Style x:Key="LtStatusPillText" TargetType="Label">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="TextColor" Value="{StaticResource LtWarningText}" />
+    </Style>
+
+    <!-- ============================================================ 按钮 -->
+    <Style x:Key="LtPrimaryAction" TargetType="Button">
+        <Setter Property="HeightRequest" Value="48" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="BackgroundColor" Value="{StaticResource LtAccent}" />
+        <Setter Property="TextColor" Value="White" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="FontSize" Value="15" />
+    </Style>
+
+    <Style x:Key="LtSecondaryAction" TargetType="Button">
+        <Setter Property="HeightRequest" Value="48" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="BackgroundColor" Value="{StaticResource LtCardBackground}" />
+        <Setter Property="BorderColor" Value="{StaticResource LtAccentOutline}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="TextColor" Value="{StaticResource LtAccent}" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="FontSize" Value="15" />
+    </Style>
+
+    <Style x:Key="LtCompactAction" TargetType="Button">
+        <Setter Property="HeightRequest" Value="38" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="16,0" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="BackgroundColor" Value="{StaticResource LtAccent}" />
+        <Setter Property="TextColor" Value="White" />
+        <Setter Property="FontAttributes" Value="Bold" />
+    </Style>
+
+    <Style x:Key="LtGhostAction" TargetType="Button">
+        <Setter Property="HeightRequest" Value="34" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="TextColor" Value="{StaticResource LtTextSecondary}" />
+    </Style>
+
+    <Style x:Key="LtDangerGhostAction" TargetType="Button" BasedOn="{StaticResource LtGhostAction}">
+        <Setter Property="TextColor" Value="{StaticResource LtDangerText}" />
+    </Style>
+
+    <!-- ============================================================ 进度 -->
+    <Style x:Key="LtProgress" TargetType="ProgressBar">
+        <Setter Property="HeightRequest" Value="6" />
+        <Setter Property="ProgressColor" Value="{StaticResource LtAccent}" />
+        <Setter Property="BackgroundColor" Value="{StaticResource LtTrack}" />
+    </Style>
+
+</ResourceDictionary>
