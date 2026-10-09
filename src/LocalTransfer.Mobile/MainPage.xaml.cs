@@ -321,7 +321,7 @@ public partial class MainPage : ContentPage
 		catch (Exception exception)
 		{
 			MobileDiagnostics.Log("receive", exception);
-			await DisplayAlert("接收失败", exception.Message, "确定");
+			await DisplayAlert("接收失败", DescribeReceiveFailure(exception), "确定");
 		}
 		finally
 		{
@@ -507,6 +507,21 @@ public partial class MainPage : ContentPage
 		TimeoutException =>
 			"电脑一直没有确认这次发送，手机已经停止等待了。\n\n" +
 			"请确认电脑上「局域传输」正在运行；弹出确认提示后尽快点「是」，然后重新发送。",
+		_ => exception.Message,
+	};
+
+	/// <summary>
+	/// The receive path downloads into the app-private storage; English I/O messages are not
+	/// actionable there. Translate the ones the user can actually act on.
+	/// </summary>
+	private static string DescribeReceiveFailure(Exception exception) => exception switch
+	{
+		IOException ioException when ioException.Message.Contains("available space") =>
+			"手机存储空间不足，无法保存这个文件。\n\n" +
+			$"（{exception.Message}）\n\n" +
+			"请清理手机存储空间后重试；接收的文件保存在应用数据目录的 Received 文件夹。",
+		TimeoutException =>
+			"等待电脑发送数据超时，连接可能已中断。\n\n请确认电脑与手机在同一个 Wi-Fi，然后重试。",
 		_ => exception.Message,
 	};
 

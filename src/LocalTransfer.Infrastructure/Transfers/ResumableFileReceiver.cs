@@ -288,18 +288,75 @@ public sealed class ResumableFileReceiver
             return;
         }
 
+        // Windows: DriveInfo answers for the volume root. Unix (Android/iOS): the volume root is
+        // "/", which on Android is a small root partition, NOT the /data volume where app storage
+        // actually lives — a DriveInfo check there rejects transfers that would easily fit.
+        // Query the directory itself with statvfs instead.
+        var availableBytes = OperatingSystem.IsWindows()
+            ? QueryWindowsFreeSpace(directory)
+            : QueryUnixFreeSpace(directory);
+
+        // If the free space cannot be determined, fail open: a genuinely full disk surfaces a
+        // meaningful error during the actual write.
+        if (availableBytes is long available && available < requiredBytes)
+        {
+            throw new IOException(
+                $"The destination does not have enough available space " +
+                $"(required {requiredBytes:N0} bytes, available {available:N0} bytes).");
+        }
+    }
+
+    private static long? QueryWindowsFreeSpace(string directory)
+    {
         var root = Path.GetPathRoot(directory);
         if (string.IsNullOrWhiteSpace(root))
         {
-            return;
+            return null;
         }
 
         var drive = new DriveInfo(root);
-        if (drive.IsReady && drive.AvailableFreeSpace < requiredBytes)
+        return drive.IsReady ? drive.AvailableFreeSpace : null;
+    }
+
+    private static long? QueryUnixFreeSpace(string directory)
+    {
+        try
         {
-            throw new IOException("The destination does not have enough available space.");
+            if (statvfs(directory, out var stat) != 0)
+            {
+                return null;
+            }
+
+            return checked((long)(stat.AvailableBlocks * stat.FundamentalBlockSize));
+        }
+        catch (Exception exception) when (
+            exception is DllNotFoundException or EntryPointNotFoundException
+                or System.Runtime.InteropServices.MarshalDirectiveException)
+        {
+            return null;
         }
     }
+
+    // Matches the 64-bit glibc/bionic layout of struct statvfs. Only the leading fields are read,
+    // so the trailing reserved array is omitted.
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct Statvfs
+    {
+        public nuint FileSystemBlockSize;
+        public nuint FundamentalBlockSize;
+        public nuint TotalBlocks;
+        public nuint FreeBlocks;
+        public nuint AvailableBlocks;
+        public nuint TotalFileNodes;
+        public nuint FreeFileNodes;
+        public nuint AvailableFileNodes;
+        public ulong FileSystemId;
+        public nuint Flags;
+        public nuint NameMaxLength;
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true, EntryPoint = "statvfs")]
+    private static extern int statvfs(string path, out Statvfs stat);
 
     private static void ValidateSha256(string value, string parameterName)
     {
