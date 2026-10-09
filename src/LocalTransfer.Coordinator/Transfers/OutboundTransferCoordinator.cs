@@ -89,6 +89,19 @@ public sealed class OutboundTransferCoordinator : IDisposable
             .ToArray();
     }
 
+    /// <summary>
+    /// Snapshot of every outbound transfer regardless of device. The desktop UI needs a single
+    /// list to render the "transfers" page; the HTTP surface only ever asks per device.
+    /// </summary>
+    public IReadOnlyList<OutboundTransferInfo> GetAll()
+    {
+        SweepTerminalTransfers();
+        return _transfers.Values
+            .Select(transfer => transfer.ToInfo())
+            .OrderBy(info => info.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+    }
+
     public OutboundTransferInfo? Get(Guid transferId, Guid deviceId)
     {
         SweepTerminalTransfers();

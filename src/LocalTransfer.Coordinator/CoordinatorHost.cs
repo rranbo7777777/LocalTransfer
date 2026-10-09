@@ -54,6 +54,12 @@ public sealed class CoordinatorHost : IAsyncDisposable
 
     public string Endpoint => $"https://{FormatHost(GetAdvertisedAddress())}:{_options.Port}";
 
+    public int Port => _options.Port;
+
+    public string ReceiveDirectory => _options.ReceiveDirectory;
+
+    public string DataDirectory => _options.DataDirectory;
+
     public string? CertificateSha256
     {
         get

@@ -1,16 +1,24 @@
-﻿using System.Text;
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
+using LocalTransfer.Contracts.Pairing;
+using LocalTransfer.Contracts.Transfers;
 using LocalTransfer.Coordinator;
 using LocalTransfer.Coordinator.Devices;
 using LocalTransfer.Coordinator.Pairing;
 using LocalTransfer.Coordinator.Transfers;
-using LocalTransfer.Contracts.Pairing;
 using Microsoft.Win32;
+// WinForms is referenced by this project as well, so the WPF types below need explicit aliases.
+using Brushes = System.Windows.Media.Brushes;
+using Button = System.Windows.Controls.Button;
+using Color = System.Windows.Media.Color;
 using DataFormats = System.Windows.DataFormats;
 using DragDropEffects = System.Windows.DragDropEffects;
 using MessageBox = System.Windows.MessageBox;
@@ -21,6 +29,9 @@ namespace LocalTransfer.Windows;
 public partial class MainWindow : Window
 {
     private readonly CoordinatorHost _coordinator;
+    private readonly DispatcherTimer _transfersRefreshTimer;
+
+    private AppPage _currentPage = AppPage.Send;
 
     public MainWindow(CoordinatorHost coordinator)
     {
@@ -30,13 +41,124 @@ public partial class MainWindow : Window
         _coordinator.Pairing.PairingRequested += OnPairingRequested;
         _coordinator.InboundTransfers.TransferOffered += OnTransferOffered;
         Closed += OnWindowClosed;
+
+        // The queue and the inbound state both move while the user watches this page, so poll
+        // only while it is visible instead of refreshing every page on a timer.
+        _transfersRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _transfersRefreshTimer.Tick += OnTransfersRefreshTick;
+
         RefreshTrustedDevices();
         ServiceStatusText.Text = $"本机服务 {_coordinator.Endpoint}";
+        ShowPage(AppPage.Send);
     }
 
     public ObservableCollection<PendingFileItem> PendingFiles { get; } = [];
 
     public ObservableCollection<TrustedDeviceInfo> TrustedDevices { get; } = [];
+
+    public ObservableCollection<TrustedDeviceRow> TrustedDeviceRows { get; } = [];
+
+    public ObservableCollection<TransferRow> OutboundRows { get; } = [];
+
+    public ObservableCollection<TransferRow> InboundRows { get; } = [];
+
+    public ObservableCollection<ReceivedFileRow> ReceivedRows { get; } = [];
+
+    // ---------------------------------------------------------------- 导航
+
+    private void OnNavClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button)
+        {
+            return;
+        }
+
+        ShowPage(button.Name switch
+        {
+            nameof(NavDevicesButton) => AppPage.Devices,
+            nameof(NavTransfersButton) => AppPage.Transfers,
+            nameof(NavHistoryButton) => AppPage.History,
+            nameof(NavSettingsButton) => AppPage.Settings,
+            _ => AppPage.Send
+        });
+    }
+
+    private void ShowPage(AppPage page)
+    {
+        _currentPage = page;
+
+        PageSend.Visibility = page == AppPage.Send ? Visibility.Visible : Visibility.Collapsed;
+        PageDevices.Visibility = page == AppPage.Devices ? Visibility.Visible : Visibility.Collapsed;
+        PageTransfers.Visibility = page == AppPage.Transfers ? Visibility.Visible : Visibility.Collapsed;
+        PageHistory.Visibility = page == AppPage.History ? Visibility.Visible : Visibility.Collapsed;
+        PageSettings.Visibility = page == AppPage.Settings ? Visibility.Visible : Visibility.Collapsed;
+
+        (PageTitleText.Text, PageSubtitleText.Text) = page switch
+        {
+            AppPage.Devices => (
+                "设备",
+                "已配对、可直接互传的设备。移除后该设备需要重新扫码配对。"),
+            AppPage.Transfers => (
+                "传输任务",
+                "进行中的传输。发送队列只保存在内存里，退出程序后需要重新排队。"),
+            AppPage.History => (
+                "历史记录",
+                $"电脑已经收到的文件，保存在 {_coordinator.ReceiveDirectory}。"),
+            AppPage.Settings => (
+                "设置",
+                "服务地址、目录与证书信息（当前为只读）。"),
+            _ => (
+                "发送文件",
+                "电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。" +
+                "手机 → 电脑：在手机上发送后，这里会弹窗让你确认。")
+        };
+
+        HighlightNav(page);
+
+        switch (page)
+        {
+            case AppPage.Devices:
+                RefreshDeviceRows();
+                break;
+            case AppPage.Transfers:
+                RefreshTransferRows();
+                _transfersRefreshTimer.Start();
+                break;
+            case AppPage.History:
+                RefreshHistoryRows();
+                break;
+            case AppPage.Settings:
+                RefreshSettings();
+                break;
+        }
+
+        if (page != AppPage.Transfers)
+        {
+            _transfersRefreshTimer.Stop();
+        }
+    }
+
+    private void HighlightNav(AppPage page)
+    {
+        var highlight = new SolidColorBrush(Color.FromRgb(0x27, 0x3B, 0x63));
+        var entries = new (AppPage Page, Button Button)[]
+        {
+            (AppPage.Send, NavSendButton),
+            (AppPage.Devices, NavDevicesButton),
+            (AppPage.Transfers, NavTransfersButton),
+            (AppPage.History, NavHistoryButton),
+            (AppPage.Settings, NavSettingsButton)
+        };
+
+        foreach (var (entryPage, button) in entries)
+        {
+            var isActive = entryPage == page;
+            button.Background = isActive ? highlight : Brushes.Transparent;
+            button.FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal;
+        }
+    }
+
+    // ---------------------------------------------------------------- 发送文件
 
     private void OnChooseFilesClicked(object sender, RoutedEventArgs e)
     {
@@ -99,7 +221,8 @@ public partial class MainWindow : Window
             }
 
             MessageBox.Show(
-                $"已将 {queuedPaths.Count} 个文件加入发送队列。\n手机保持应用打开后会主动下载。",
+                $"已将 {queuedPaths.Count} 个文件加入发送队列。\n手机保持应用打开后会主动下载，" +
+                "可在左侧「传输任务」查看进度。",
                 "已加入发送队列",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -124,7 +247,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnDeviceSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void OnDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSendButton();
     }
@@ -194,6 +317,222 @@ public partial class MainWindow : Window
             ? "把「待发送文件」加入发送队列，手机会主动下载"
             : PairingHintText.Text;
     }
+
+    // ---------------------------------------------------------------- 设备
+
+    private void OnRefreshDevicesClicked(object sender, RoutedEventArgs e) => RefreshDeviceRows();
+
+    private void RefreshDeviceRows()
+    {
+        TrustedDeviceRows.Clear();
+        foreach (var device in TrustedDevices)
+        {
+            var paired = device.PairedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            var lastSeen = device.LastSeenUtc is { } seen
+                ? $"最近活动 {seen.ToLocalTime():yyyy-MM-dd HH:mm}"
+                : "尚未连接过";
+            TrustedDeviceRows.Add(new TrustedDeviceRow(
+                device.DeviceId,
+                device.DisplayName,
+                $"{device.Platform} · 配对于 {paired} · {lastSeen}"));
+        }
+
+        EmptyDevicesText.Visibility = TrustedDeviceRows.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private async void OnRemoveDeviceClicked(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TrustedDeviceRow row)
+        {
+            return;
+        }
+
+        var confirmation = MessageBox.Show(
+            $"确定移除设备「{row.DisplayName}」吗？\n\n移除后该设备需要重新扫码配对，队列中发给它的文件会失效。",
+            "移除可信设备",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirmation != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            await _coordinator.TrustedDevices.RemoveAsync(row.DeviceId);
+
+            // Without this the device's queued transfers would sit at "queued" until the
+            // application restarts, because it can no longer authenticate to download them.
+            foreach (var transfer in _coordinator.OutboundTransfers.GetAll()
+                         .Where(item => item.DeviceId == row.DeviceId))
+            {
+                await _coordinator.OutboundTransfers.CancelAsync(transfer.TransferId, row.DeviceId);
+            }
+
+            RefreshTrustedDevices();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"移除失败：{exception.Message}",
+                "局域传输",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    // ---------------------------------------------------------------- 传输任务
+
+    private void OnRefreshTransfersClicked(object sender, RoutedEventArgs e) => RefreshTransferRows();
+
+    private void OnTransfersRefreshTick(object? sender, EventArgs e) => RefreshTransferRows();
+
+    private void RefreshTransferRows()
+    {
+        OutboundRows.Clear();
+        foreach (var transfer in _coordinator.OutboundTransfers.GetAll()
+                     .Where(item => IsActiveTransfer(item.State)))
+        {
+            OutboundRows.Add(new TransferRow(
+                transfer.Manifest.FileName,
+                $"{FindDeviceName(transfer.DeviceId)} · {DescribeState(transfer.State)}",
+                FormatSize(transfer.Manifest.Length)));
+        }
+
+        InboundRows.Clear();
+        foreach (var transfer in _coordinator.InboundTransfers.GetAll()
+                     .Where(item => IsActiveTransfer(item.State)))
+        {
+            InboundRows.Add(new TransferRow(
+                transfer.Manifest.FileName,
+                $"{FindDeviceName(transfer.DeviceId)} · {DescribeState(transfer.State)}",
+                FormatSize(transfer.Manifest.Length)));
+        }
+
+        EmptyOutboundText.Visibility = OutboundRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyInboundText.Visibility = InboundRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // Named "IsActiveTransfer" rather than "IsActive" to avoid hiding Window.IsActive.
+    private static bool IsActiveTransfer(TransferState state) =>
+        state is not (TransferState.Completed or TransferState.Failed or
+            TransferState.Rejected or TransferState.Canceled);
+
+    private string FindDeviceName(Guid deviceId) =>
+        TrustedDevices.FirstOrDefault(device => device.DeviceId == deviceId)?.DisplayName
+        ?? "已移除的设备";
+
+    private static string DescribeState(TransferState state) => state switch
+    {
+        TransferState.WaitingForApproval => "等待在此电脑上确认",
+        TransferState.Queued => "已入队",
+        TransferState.Transferring => "传输中",
+        TransferState.Paused => "已暂停",
+        TransferState.WaitingForConnection => "等待手机连接",
+        TransferState.Verifying => "正在校验 SHA-256",
+        TransferState.Completed => "已完成",
+        TransferState.Failed => "失败",
+        TransferState.Rejected => "已拒绝",
+        TransferState.Canceled => "已取消",
+        _ => state.ToString()
+    };
+
+    // ---------------------------------------------------------------- 历史记录
+
+    private void OnRefreshHistoryClicked(object sender, RoutedEventArgs e) => RefreshHistoryRows();
+
+    private void RefreshHistoryRows()
+    {
+        ReceivedRows.Clear();
+        string? error = null;
+        try
+        {
+            var directory = _coordinator.ReceiveDirectory;
+            if (Directory.Exists(directory))
+            {
+                // Finished files only: the receiver keeps ".part" payloads and checkpoint JSON in
+                // a ".localtransfer" subdirectory, and this listing does not recurse.
+                var entries = new List<ReceivedFileRow>();
+                foreach (var path in Directory.EnumerateFiles(directory))
+                {
+                    try
+                    {
+                        var file = new FileInfo(path);
+                        entries.Add(new ReceivedFileRow(
+                            file.Name,
+                            FormatSize(file.Length),
+                            file.LastWriteTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+                            file.FullName));
+                    }
+                    catch (Exception)
+                    {
+                        // A file that disappeared between listing and inspection is skipped.
+                    }
+                }
+
+                entries.Sort((left, right) => string.CompareOrdinal(right.TimeText, left.TimeText));
+                foreach (var entry in entries)
+                {
+                    ReceivedRows.Add(entry);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            // Reading history must never take the window down.
+            error = exception.Message;
+        }
+
+        EmptyHistoryText.Text = error is null
+            ? "还没有收到过文件。手机向电脑发送后，会把文件保存到接收目录。"
+            : $"无法读取接收目录：{error}";
+        EmptyHistoryText.Visibility = ReceivedRows.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    // ---------------------------------------------------------------- 设置
+
+    private void RefreshSettings()
+    {
+        SettingEndpointText.Text = _coordinator.Endpoint;
+        SettingPortText.Text = _coordinator.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        SettingReceiveDirText.Text = _coordinator.ReceiveDirectory;
+        SettingDataDirText.Text = _coordinator.DataDirectory;
+        SettingCertText.Text = _coordinator.CertificateSha256 ?? "（协调服务未启动）";
+        SettingProtocolText.Text = "1（协议版本 1）";
+    }
+
+    private void OnOpenReceiveFolderClicked(object sender, RoutedEventArgs e) =>
+        OpenFolder(_coordinator.ReceiveDirectory);
+
+    private void OnOpenDataFolderClicked(object sender, RoutedEventArgs e) =>
+        OpenFolder(_coordinator.DataDirectory);
+
+    private static void OpenFolder(string path)
+    {
+        try
+        {
+            Directory.CreateDirectory(path);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"无法打开目录：{exception.Message}",
+                "局域传输",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    // ---------------------------------------------------------------- 配对与接收
 
     private void OnPairingRequested(object? sender, PairingRequestInfo request)
     {
@@ -274,11 +613,13 @@ public partial class MainWindow : Window
                 ? 0
                 : -1;
 
+        RefreshDeviceRows();
         UpdateSendButton();
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)
     {
+        _transfersRefreshTimer.Stop();
         _coordinator.Pairing.PairingRequested -= OnPairingRequested;
         _coordinator.InboundTransfers.TransferOffered -= OnTransferOffered;
     }
@@ -333,6 +674,15 @@ public partial class MainWindow : Window
 
         return $"{size:0.##} {units[unitIndex]}";
     }
+
+    private enum AppPage
+    {
+        Send,
+        Devices,
+        Transfers,
+        History,
+        Settings
+    }
 }
 
 public sealed record PendingFileItem(
@@ -340,3 +690,19 @@ public sealed record PendingFileItem(
     string FileName,
     string DirectoryName,
     string SizeText);
+
+public sealed record TrustedDeviceRow(
+    Guid DeviceId,
+    string DisplayName,
+    string DetailText);
+
+public sealed record TransferRow(
+    string FileName,
+    string DetailText,
+    string SizeText);
+
+public sealed record ReceivedFileRow(
+    string FileName,
+    string SizeText,
+    string TimeText,
+    string FullPath);

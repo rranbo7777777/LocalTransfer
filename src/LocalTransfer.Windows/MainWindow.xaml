@@ -18,6 +18,7 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FontSize" Value="14" />
+            <Setter Property="Cursor" Value="Hand" />
         </Style>
         <Style x:Key="PrimaryButton" TargetType="Button">
             <Setter Property="Height" Value="40" />
@@ -33,6 +34,13 @@
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="#CFD6E4" />
         </Style>
+        <Style x:Key="CardBorder" TargetType="Border">
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#E1E5ED" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="18" />
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -46,19 +54,17 @@
                 <StackPanel DockPanel.Dock="Top" Margin="0,24,0,0">
                     <TextBlock Margin="24,0,0,24" Foreground="White" FontSize="21"
                                FontWeight="SemiBold" Text="局域传输" />
-                    <!-- This is the current page, not an action. Rendering it as a Button with no
-                         Click handler made it look broken. -->
-                    <Border Margin="12,3" Padding="16,0" Height="42" Background="#273B63"
-                            CornerRadius="6">
-                        <TextBlock VerticalAlignment="Center" Foreground="#DCE4F5" FontSize="14"
-                                   FontWeight="SemiBold" Text="发送文件" />
-                    </Border>
-                    <!-- The other navigation entries were placeholders with no Click handler, so
-                         clicking them silently did nothing. Show the roadmap as text instead of
-                         dead buttons until those pages exist. -->
-                    <TextBlock Margin="24,20,24,0" Foreground="#7C8CAE" FontSize="12"
-                               TextWrapping="Wrap"
-                               Text="设备管理、传输任务、历史记录与设置尚未实现。" />
+                    <!-- Real navigation: every entry switches the content pane below. -->
+                    <Button x:Name="NavSendButton" Style="{StaticResource SidebarButton}"
+                            Content="发送文件" Click="OnNavClicked" />
+                    <Button x:Name="NavDevicesButton" Style="{StaticResource SidebarButton}"
+                            Content="设备" Click="OnNavClicked" />
+                    <Button x:Name="NavTransfersButton" Style="{StaticResource SidebarButton}"
+                            Content="传输任务" Click="OnNavClicked" />
+                    <Button x:Name="NavHistoryButton" Style="{StaticResource SidebarButton}"
+                            Content="历史记录" Click="OnNavClicked" />
+                    <Button x:Name="NavSettingsButton" Style="{StaticResource SidebarButton}"
+                            Content="设置" Click="OnNavClicked" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="24,0,24,22">
                     <TextBlock Foreground="#8FA0BE" FontSize="12" Text="协议版本 1" />
@@ -70,10 +76,7 @@
         <Grid Grid.Column="1" Margin="34,28">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Grid Grid.Row="0">
@@ -82,8 +85,10 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock FontSize="26" FontWeight="SemiBold" Foreground="#17233C" Text="发送文件" />
-                    <TextBlock Margin="0,7,0,0" Foreground="#69758C" TextWrapping="Wrap"
+                    <TextBlock x:Name="PageTitleText" FontSize="26" FontWeight="SemiBold"
+                               Foreground="#17233C" Text="发送文件" />
+                    <TextBlock x:Name="PageSubtitleText" Margin="0,7,0,0" Foreground="#69758C"
+                               TextWrapping="Wrap"
                                Text="电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。手机 → 电脑：在手机上发送后，这里会弹窗让你确认。" />
                 </StackPanel>
                 <Border Grid.Column="1" Padding="12,7" Background="#FFF5DC" CornerRadius="16">
@@ -95,90 +100,343 @@
                 </Border>
             </Grid>
 
-            <Border Grid.Row="1" Margin="0,25,0,0" Padding="18" Background="White"
-                    BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="300" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="目标设备" />
-                    <ComboBox x:Name="DeviceComboBox" Grid.Column="1" Margin="16,0,0,0" Height="36"
-                              ItemsSource="{Binding TrustedDevices}" DisplayMemberPath="DisplayName"
-                              SelectionChanged="OnDeviceSelectionChanged" />
-                    <TextBlock x:Name="PairingHintText" Grid.Column="2" Margin="18,0,0,0"
-                               VerticalAlignment="Center" TextWrapping="Wrap"
-                               Foreground="#7A8598" Text="完成安全配对后才能开始传输" />
-                    <Button Grid.Column="3" Margin="14,0,0,0" Click="OnCreatePairingClicked"
-                            Style="{StaticResource SecondaryButton}" Content="创建配对信息" />
+            <Grid Grid.Row="1" Margin="0,25,0,0">
+
+                <!-- ===================== 发送文件 ===================== -->
+                <Grid x:Name="PageSend">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Padding="18" Background="White"
+                            BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="300" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="目标设备" />
+                            <ComboBox x:Name="DeviceComboBox" Grid.Column="1" Margin="16,0,0,0" Height="36"
+                                      ItemsSource="{Binding TrustedDevices}" DisplayMemberPath="DisplayName"
+                                      SelectionChanged="OnDeviceSelectionChanged" />
+                            <TextBlock x:Name="PairingHintText" Grid.Column="2" Margin="18,0,0,0"
+                                       VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="#7A8598" Text="完成安全配对后才能开始传输" />
+                            <Button Grid.Column="3" Margin="14,0,0,0" Click="OnCreatePairingClicked"
+                                    Style="{StaticResource SecondaryButton}" Content="创建配对信息" />
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1" Margin="0,18,0,0" Padding="24" AllowDrop="True"
+                            Background="#F9FBFF" BorderBrush="#9CB3E8" BorderThickness="1" CornerRadius="8"
+                            DragOver="OnFilesDragOver" Drop="OnFilesDropped">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock HorizontalAlignment="Center" Foreground="#356AE6" FontSize="34"
+                                       FontWeight="Light" Text="＋" />
+                            <TextBlock Margin="0,4,0,0" HorizontalAlignment="Center" FontSize="16"
+                                       FontWeight="SemiBold" Text="拖放文件到这里" />
+                            <TextBlock Margin="0,6,0,12" HorizontalAlignment="Center" Foreground="#7A8598"
+                                       Text="支持多选；不会读取文件内容，直到你确认发送" />
+                            <Button Click="OnChooseFilesClicked" Style="{StaticResource SecondaryButton}" Content="选择文件" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="2" Margin="0,18,0,0" Padding="18" Background="White"
+                            BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel>
+                                <TextBlock FontSize="15" FontWeight="SemiBold" Text="待发送文件" />
+                                <Button DockPanel.Dock="Right" Padding="10,3" Click="OnClearFilesClicked"
+                                        Background="Transparent" BorderThickness="0" Foreground="#67748A" Content="清空" />
+                            </DockPanel>
+                            <Grid Grid.Row="1" Margin="0,12,0,0">
+                                <TextBlock x:Name="EmptyQueueText" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Foreground="#9AA4B6" Text="尚未选择文件" />
+                                <ListBox ItemsSource="{Binding PendingFiles}" BorderThickness="0" Background="Transparent">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                               Text="{Binding DirectoryName}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
+                                                           Foreground="#647087" Text="{Binding SizeText}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="3" Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="QueueSummaryText" VerticalAlignment="Center"
+                                   Foreground="#69758C" Text="0 个文件" />
+                        <Button x:Name="SendButton" Grid.Column="1" Width="130" IsEnabled="False"
+                                Click="OnSendClicked" Style="{StaticResource PrimaryButton}" Content="发送"
+                                ToolTip="把「待发送文件」加入发送队列，手机会主动下载" />
+                    </Grid>
                 </Grid>
-            </Border>
 
-            <Border Grid.Row="2" Margin="0,18,0,0" Padding="24" AllowDrop="True"
-                    Background="#F9FBFF" BorderBrush="#9CB3E8" BorderThickness="1" CornerRadius="8"
-                    DragOver="OnFilesDragOver" Drop="OnFilesDropped">
-                <StackPanel HorizontalAlignment="Center">
-                    <TextBlock HorizontalAlignment="Center" Foreground="#356AE6" FontSize="34"
-                               FontWeight="Light" Text="＋" />
-                    <TextBlock Margin="0,4,0,0" HorizontalAlignment="Center" FontSize="16"
-                               FontWeight="SemiBold" Text="拖放文件到这里" />
-                    <TextBlock Margin="0,6,0,12" HorizontalAlignment="Center" Foreground="#7A8598"
-                               Text="支持多选；不会读取文件内容，直到你确认发送" />
-                    <Button Click="OnChooseFilesClicked" Style="{StaticResource SecondaryButton}" Content="选择文件" />
-                </StackPanel>
-            </Border>
-
-            <Border Grid.Row="3" Margin="0,18,0,0" Padding="18" Background="White"
-                    BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
-                <Grid>
+                <!-- ===================== 设备 ===================== -->
+                <Grid x:Name="PageDevices" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <DockPanel>
-                        <TextBlock FontSize="15" FontWeight="SemiBold" Text="待发送文件" />
-                        <Button DockPanel.Dock="Right" Padding="10,3" Click="OnClearFilesClicked"
-                                Background="Transparent" BorderThickness="0" Foreground="#67748A" Content="清空" />
-                    </DockPanel>
-                    <Grid Grid.Row="1" Margin="0,12,0,0">
-                        <TextBlock x:Name="EmptyQueueText" HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" Foreground="#9AA4B6" Text="尚未选择文件" />
-                        <ListBox ItemsSource="{Binding PendingFiles}" BorderThickness="0" Background="Transparent">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Margin="0,5">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
-                                                       Text="{Binding DirectoryName}" TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                        <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
-                                                   Foreground="#647087" Text="{Binding SizeText}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </Grid>
+                    <Border Grid.Row="0" Style="{StaticResource CardBorder}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
+                                    Click="OnRefreshDevicesClicked" Style="{StaticResource SecondaryButton}"
+                                    Content="刷新" />
+                            <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                                       Text="已配对、可直接互传的设备。移除后该设备需要重新扫码配对。" />
+                        </DockPanel>
+                    </Border>
+                    <Border Grid.Row="1" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
+                        <Grid>
+                            <TextBlock x:Name="EmptyDevicesText" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="#9AA4B6"
+                                       Text="还没有配对过的设备。回到「发送文件」，点「创建配对信息」后用手机扫码。" />
+                            <ListBox ItemsSource="{Binding TrustedDeviceRows}" BorderThickness="0"
+                                     Background="Transparent">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                           Text="{Binding DetailText}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Margin="20,0,0,0" Padding="12,3"
+                                                    VerticalAlignment="Center" Click="OnRemoveDeviceClicked"
+                                                    Background="Transparent" BorderThickness="0"
+                                                    Foreground="#C0392B" Content="移除"
+                                                    ToolTip="撤销该设备的信任，之后需要重新配对" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
                 </Grid>
-            </Border>
 
-            <Grid Grid.Row="4" Margin="0,18,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock x:Name="QueueSummaryText" VerticalAlignment="Center"
-                           Foreground="#69758C" Text="0 个文件" />
-                <Button x:Name="SendButton" Grid.Column="1" Width="130" IsEnabled="False"
-                        Click="OnSendClicked" Style="{StaticResource PrimaryButton}" Content="发送"
-                        ToolTip="把「待发送文件」加入发送队列，手机会主动下载" />
+                <!-- ===================== 传输任务 ===================== -->
+                <Grid x:Name="PageTransfers" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource CardBorder}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
+                                    Click="OnRefreshTransfersClicked" Style="{StaticResource SecondaryButton}"
+                                    Content="刷新" />
+                            <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                                       Text="进行中的传输。发送队列只保存在内存里，退出程序后需要重新排队。" />
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Row="1" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="待发送 · 电脑 → 手机" />
+                            <Grid Grid.Row="1" Margin="0,10,0,0">
+                                <TextBlock x:Name="EmptyOutboundText" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Foreground="#9AA4B6"
+                                           Text="没有待发送的文件" />
+                                <ListBox ItemsSource="{Binding OutboundRows}" BorderThickness="0"
+                                         Background="Transparent">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                               Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
+                                                           Foreground="#647087" Text="{Binding SizeText}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="待接收 · 手机 → 电脑" />
+                            <Grid Grid.Row="1" Margin="0,10,0,0">
+                                <TextBlock x:Name="EmptyInboundText" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Foreground="#9AA4B6"
+                                           Text="没有待接收的文件" />
+                                <ListBox ItemsSource="{Binding InboundRows}" BorderThickness="0"
+                                         Background="Transparent">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                               Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center"
+                                                           Foreground="#647087" Text="{Binding SizeText}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- ===================== 历史记录 ===================== -->
+                <Grid x:Name="PageHistory" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource CardBorder}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
+                                    Click="OnOpenReceiveFolderClicked" Style="{StaticResource SecondaryButton}"
+                                    Content="打开文件夹" />
+                            <Button DockPanel.Dock="Right" Height="32" Margin="14,0,0,0"
+                                    Click="OnRefreshHistoryClicked" Style="{StaticResource SecondaryButton}"
+                                    Content="刷新" />
+                            <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                                       Text="电脑已经收到的文件。传输中的临时文件不会出现在这里。" />
+                        </DockPanel>
+                    </Border>
+                    <Border Grid.Row="1" Margin="0,18,0,0" Style="{StaticResource CardBorder}">
+                        <Grid>
+                            <TextBlock x:Name="EmptyHistoryText" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                                       Foreground="#9AA4B6" Text="还没有收到过文件" />
+                            <ListBox ItemsSource="{Binding ReceivedRows}" BorderThickness="0"
+                                     Background="Transparent">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding FileName}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Margin="0,3,0,0" Foreground="#8A94A6" FontSize="12"
+                                                           Text="{Binding FullPath}" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="20,0,0,0">
+                                                <TextBlock HorizontalAlignment="Right" Foreground="#647087"
+                                                           Text="{Binding SizeText}" />
+                                                <TextBlock Margin="0,3,0,0" HorizontalAlignment="Right"
+                                                           Foreground="#8A94A6" FontSize="12"
+                                                           Text="{Binding TimeText}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- ===================== 设置 ===================== -->
+                <Grid x:Name="PageSettings" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource CardBorder}">
+                        <TextBlock VerticalAlignment="Center" Foreground="#69758C" TextWrapping="Wrap"
+                                   Text="以下信息当前为只读。端口与目录在程序启动时确定。" />
+                    </Border>
+                    <Border Grid.Row="1" Margin="0,18,0,0" Padding="24" Background="White"
+                            BorderBrush="#E1E5ED" BorderThickness="1" CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Text="服务地址（手机配对时使用）" />
+                            <TextBlock x:Name="SettingEndpointText" Margin="0,4,0,16" Foreground="#3D4A61"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock FontWeight="SemiBold" Text="监听端口" />
+                            <TextBlock x:Name="SettingPortText" Margin="0,4,0,16" Foreground="#3D4A61" />
+
+                            <TextBlock FontWeight="SemiBold" Text="接收目录（手机发来的文件保存在这里）" />
+                            <DockPanel Margin="0,4,0,16">
+                                <Button DockPanel.Dock="Right" Height="30" Margin="12,0,0,0" Padding="12,0"
+                                        Click="OnOpenReceiveFolderClicked" Style="{StaticResource SecondaryButton}"
+                                        Content="打开" />
+                                <TextBlock x:Name="SettingReceiveDirText" VerticalAlignment="Center"
+                                           Foreground="#3D4A61" TextWrapping="Wrap" />
+                            </DockPanel>
+
+                            <TextBlock FontWeight="SemiBold" Text="数据目录（可信设备与证书）" />
+                            <DockPanel Margin="0,4,0,16">
+                                <Button DockPanel.Dock="Right" Height="30" Margin="12,0,0,0" Padding="12,0"
+                                        Click="OnOpenDataFolderClicked" Style="{StaticResource SecondaryButton}"
+                                        Content="打开" />
+                                <TextBlock x:Name="SettingDataDirText" VerticalAlignment="Center"
+                                           Foreground="#3D4A61" TextWrapping="Wrap" />
+                            </DockPanel>
+
+                            <TextBlock FontWeight="SemiBold" Text="服务证书 SHA-256 指纹" />
+                            <TextBlock x:Name="SettingCertText" Margin="0,4,0,16" Foreground="#3D4A61"
+                                       TextWrapping="Wrap" FontFamily="Consolas" />
+
+                            <TextBlock FontWeight="SemiBold" Text="协议版本" />
+                            <TextBlock x:Name="SettingProtocolText" Margin="0,4,0,0" Foreground="#3D4A61" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

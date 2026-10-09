@@ -81,6 +81,20 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             .OrderBy(transfer => transfer.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
 
+    /// <summary>
+    /// Snapshot of every inbound transfer regardless of device, for the desktop UI. The missing
+    /// chunk list is omitted because computing it needs the async receiver and the UI only needs
+    /// a summary row.
+    /// </summary>
+    public IReadOnlyList<InboundTransferInfo> GetAll()
+    {
+        SweepTerminalTransfers();
+        return _transfers.Values
+            .Select(transfer => transfer.ToInfo([]))
+            .OrderBy(info => info.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+    }
+
     public async Task<bool> ApproveAsync(Guid transferId, CancellationToken cancellationToken = default)
     {
         if (!_transfers.TryGetValue(transferId, out var transfer))
