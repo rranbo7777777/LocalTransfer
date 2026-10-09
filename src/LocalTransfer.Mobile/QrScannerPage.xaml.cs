@@ -1,3 +1,4 @@
+using Microsoft.Maui.ApplicationModel;
 using ZXing.Net.Maui;
 
 namespace LocalTransfer.Mobile;
@@ -20,6 +21,33 @@ public partial class QrScannerPage : ContentPage
     }
 
     public Task<string?> WaitForResultAsync() => _result.Task;
+
+    /// <summary>
+    /// The manifest only declares <c>android.permission.CAMERA</c>, and since Android 6 a
+    /// dangerous permission must also be granted at runtime. Neither this app nor
+    /// ZXing.Net.Maui ever requested it, so opening the camera raised a SecurityException on the
+    /// Java side that surfaced as "java.lang.RuntimeException: exception_wasthrown" and took the
+    /// app down at exactly the step needed to pair. Check - and ask - before the scanner is
+    /// pushed so a refusal can be reported with a workable alternative.
+    /// </summary>
+    public static async Task<bool> EnsureCameraPermissionAsync()
+    {
+        try
+        {
+            var status = await Permissions.CheckStatusAsync<Permissions.Camera>();
+            if (status != PermissionStatus.Granted)
+            {
+                status = await Permissions.RequestAsync<Permissions.Camera>();
+            }
+
+            return status == PermissionStatus.Granted;
+        }
+        catch (Exception exception)
+        {
+            MobileDiagnostics.Log("camera-permission", exception);
+            return false;
+        }
+    }
 
     protected override bool OnBackButtonPressed()
     {

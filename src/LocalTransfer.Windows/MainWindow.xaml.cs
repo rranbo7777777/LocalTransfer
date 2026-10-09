@@ -177,7 +177,22 @@ public partial class MainWindow : Window
 
     private void UpdateSendButton()
     {
-        SendButton.IsEnabled = PendingFiles.Count > 0 && DeviceComboBox.SelectedItem is TrustedDeviceInfo;
+        var hasDevice = DeviceComboBox.SelectedItem is TrustedDeviceInfo;
+        SendButton.IsEnabled = PendingFiles.Count > 0 && hasDevice;
+
+        // "发送" stays greyed out until both a device and a file are present. Say which half is
+        // missing, otherwise a disabled button reads as a broken application.
+        PairingHintText.Text = TrustedDevices.Count == 0
+            ? "还没有配对过的手机。点右侧「创建配对信息」，用手机扫码；手机提出请求后这里会弹窗，确认后设备才会出现在左边的列表里。"
+            : !hasDevice
+                ? "请在上方选择一台可信设备。"
+                : PendingFiles.Count == 0
+                    ? "请先添加要发送的文件。"
+                    : "已就绪：点「发送」入队，随后在手机上点「接收电脑文件」。";
+
+        SendButton.ToolTip = SendButton.IsEnabled
+            ? "把「待发送文件」加入发送队列，手机会主动下载"
+            : PairingHintText.Text;
     }
 
     private void OnPairingRequested(object? sender, PairingRequestInfo request)

@@ -46,7 +46,13 @@
                 <StackPanel DockPanel.Dock="Top" Margin="0,24,0,0">
                     <TextBlock Margin="24,0,0,24" Foreground="White" FontSize="21"
                                FontWeight="SemiBold" Text="局域传输" />
-                    <Button Style="{StaticResource SidebarButton}" Background="#273B63" Content="发送文件" />
+                    <!-- This is the current page, not an action. Rendering it as a Button with no
+                         Click handler made it look broken. -->
+                    <Border Margin="12,3" Padding="16,0" Height="42" Background="#273B63"
+                            CornerRadius="6">
+                        <TextBlock VerticalAlignment="Center" Foreground="#DCE4F5" FontSize="14"
+                                   FontWeight="SemiBold" Text="发送文件" />
+                    </Border>
                     <!-- The other navigation entries were placeholders with no Click handler, so
                          clicking them silently did nothing. Show the roadmap as text instead of
                          dead buttons until those pages exist. -->
@@ -77,8 +83,8 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock FontSize="26" FontWeight="SemiBold" Foreground="#17233C" Text="发送文件" />
-                    <TextBlock Margin="0,7,0,0" Foreground="#69758C"
-                               Text="选择可信设备，再拖入或选择要发送的文件。" />
+                    <TextBlock Margin="0,7,0,0" Foreground="#69758C" TextWrapping="Wrap"
+                               Text="电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。手机 → 电脑：在手机上发送后，这里会弹窗让你确认。" />
                 </StackPanel>
                 <Border Grid.Column="1" Padding="12,7" Background="#FFF5DC" CornerRadius="16">
                     <StackPanel Orientation="Horizontal">
@@ -102,7 +108,8 @@
                     <ComboBox x:Name="DeviceComboBox" Grid.Column="1" Margin="16,0,0,0" Height="36"
                               ItemsSource="{Binding TrustedDevices}" DisplayMemberPath="DisplayName"
                               SelectionChanged="OnDeviceSelectionChanged" />
-                    <TextBlock Grid.Column="2" Margin="18,0,0,0" VerticalAlignment="Center"
+                    <TextBlock x:Name="PairingHintText" Grid.Column="2" Margin="18,0,0,0"
+                               VerticalAlignment="Center" TextWrapping="Wrap"
                                Foreground="#7A8598" Text="完成安全配对后才能开始传输" />
                     <Button Grid.Column="3" Margin="14,0,0,0" Click="OnCreatePairingClicked"
                             Style="{StaticResource SecondaryButton}" Content="创建配对信息" />
@@ -170,7 +177,8 @@
                 <TextBlock x:Name="QueueSummaryText" VerticalAlignment="Center"
                            Foreground="#69758C" Text="0 个文件" />
                 <Button x:Name="SendButton" Grid.Column="1" Width="130" IsEnabled="False"
-                        Click="OnSendClicked" Style="{StaticResource PrimaryButton}" Content="发送" />
+                        Click="OnSendClicked" Style="{StaticResource PrimaryButton}" Content="发送"
+                        ToolTip="把「待发送文件」加入发送队列，手机会主动下载" />
             </Grid>
         </Grid>
     </Grid>

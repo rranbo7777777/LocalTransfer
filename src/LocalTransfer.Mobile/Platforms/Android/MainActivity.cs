@@ -42,17 +42,27 @@ public class MainActivity : MauiAppCompatActivity
 			return;
 		}
 
-		var uris = GetSharedUris(intent)
-			.Where(uri => uri.Scheme == "content")
-			.GroupBy(uri => uri.ToString(), StringComparer.Ordinal)
-			.Select(group => group.First())
-			.ToArray();
-		if (uris.Length == 0)
+		// OnCreate/OnNewIntent are invoked from Java: anything that escapes here is reported as an
+		// opaque "java.lang.RuntimeException: exception_wasthrown" and takes the app down, so a
+		// share we cannot make sense of must degrade to "nothing was queued" instead.
+		try
 		{
-			return;
-		}
+			var uris = GetSharedUris(intent)
+				.Where(uri => uri.Scheme == "content")
+				.GroupBy(uri => uri.ToString(), StringComparer.Ordinal)
+				.Select(group => group.First())
+				.ToArray();
+			if (uris.Length == 0)
+			{
+				return;
+			}
 
-		SharedFileInbox.Add(uris.Select(CreateSharedFile));
+			SharedFileInbox.Add(uris.Select(CreateSharedFile));
+		}
+		catch (Exception exception)
+		{
+			MobileDiagnostics.Log("shared-intake", exception);
+		}
 	}
 
 	private static IEnumerable<Android.Net.Uri> GetSharedUris(Intent intent)
@@ -115,13 +125,20 @@ public class MainActivity : MauiAppCompatActivity
 	{
 		var displayName = uri.LastPathSegment ?? "共享文件";
 		long? length = null;
-		using (var cursor = ContentResolver?.Query(
-		           uri,
-		           new[] { IOpenableColumns.DisplayName, IOpenableColumns.Size },
-		           null,
-		           null,
-		           null))
+
+		// A cursor query against a foreign content provider can fail in every possible way: an
+		// unknown URI, a revoked grant, a provider that does not implement OpenableColumns, or
+		// just a Java exception thrown by a ROM-specific media provider. None of it should stop
+		// the file from being offered for sending, so fall back to the URI's last path segment
+		// and an unknown size.
+		try
 		{
+			using var cursor = ContentResolver?.Query(
+				uri,
+				new[] { IOpenableColumns.DisplayName, IOpenableColumns.Size },
+				null,
+				null,
+				null);
 			if (cursor?.MoveToFirst() == true)
 			{
 				var nameIndex = cursor.GetColumnIndex(IOpenableColumns.DisplayName);
@@ -133,9 +150,14 @@ public class MainActivity : MauiAppCompatActivity
 				var sizeIndex = cursor.GetColumnIndex(IOpenableColumns.Size);
 				if (sizeIndex >= 0 && !cursor.IsNull(sizeIndex))
 				{
-					length = cursor.GetLong(sizeIndex);
+					var reportedSize = cursor.GetLong(sizeIndex);
+					length = reportedSize >= 0 ? reportedSize : null;
 				}
 			}
+		}
+		catch (Exception exception)
+		{
+			MobileDiagnostics.Log("shared-metadata", exception);
 		}
 
 		// The name comes from another app's content provider and is sent verbatim as the
@@ -148,7 +170,17 @@ public class MainActivity : MauiAppCompatActivity
 
 		var contentResolver = ContentResolver
 			?? throw new InvalidOperationException("Android content resolver is unavailable.");
-		var contentType = contentResolver.GetType(uri) ?? "application/octet-stream";
+		string contentType;
+		try
+		{
+			contentType = contentResolver.GetType(uri) ?? "application/octet-stream";
+		}
+		catch (Exception exception)
+		{
+			MobileDiagnostics.Log("shared-content-type", exception);
+			contentType = "application/octet-stream";
+		}
+
 		return new SharedSourceFile(
 			displayName,
 			contentType,

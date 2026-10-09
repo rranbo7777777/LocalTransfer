@@ -41,8 +41,30 @@ public partial class MainPage : ContentPage
 		}
 		catch (Exception exception)
 		{
-			await DisplayAlert("无法读取安全凭据", exception.Message, "确定");
+			MobileDiagnostics.Log("secure-storage", exception);
+			ShowDeferredAlert("无法读取安全凭据", exception.Message);
 		}
+	}
+
+	/// <summary>
+	/// Showing a modal dialog straight from <c>OnAppearing</c> races the Android page transition
+	/// (the page is not attached to the window yet) and can itself throw a Java exception, which
+	/// escapes this Java-invoked callback as "exception_wasthrown". Post the dialog instead, and
+	/// never let reporting a failure become a new failure.
+	/// </summary>
+	private void ShowDeferredAlert(string title, string message)
+	{
+		MainThread.BeginInvokeOnMainThread(async () =>
+		{
+			try
+			{
+				await DisplayAlert(title, message, "确定");
+			}
+			catch (Exception exception)
+			{
+				MobileDiagnostics.Log("alert", exception);
+			}
+		});
 	}
 
 	private async void OnPairClicked(object sender, EventArgs e)
@@ -59,6 +81,17 @@ public partial class MainPage : ContentPage
 			string? json;
 			if (method == "扫描电脑二维码")
 			{
+				if (!await QrScannerPage.EnsureCameraPermissionAsync())
+				{
+					await DisplayAlert(
+						"无法打开相机",
+						"局域传输没有相机权限，无法扫描二维码。\n\n" +
+						"可在手机「设置 → 应用 → 局域传输 → 权限」中授予相机权限；也可以改用电：在电脑上点「复制配对信息」，" +
+						"把复制到的内容发到手机，再回到这里选择「粘贴配对信息」。",
+						"确定");
+					return;
+				}
+
 				var scanner = new QrScannerPage();
 				await Navigation.PushModalAsync(new NavigationPage(scanner));
 				json = await scanner.WaitForResultAsync();
@@ -95,6 +128,7 @@ public partial class MainPage : ContentPage
 		catch (Exception exception)
 		{
 			ConnectionStatusLabel.Text = _connection is null ? "未连接" : "已连接";
+			MobileDiagnostics.Log("pairing", exception);
 			await DisplayAlert("配对失败", exception.Message, "确定");
 		}
 		finally
@@ -138,6 +172,7 @@ public partial class MainPage : ContentPage
 		}
 		catch (Exception exception)
 		{
+			MobileDiagnostics.Log("choose-files", exception);
 			await DisplayAlert("无法选择文件", exception.Message, "确定");
 		}
 	}
@@ -176,6 +211,7 @@ public partial class MainPage : ContentPage
 		}
 		catch (Exception exception)
 		{
+			MobileDiagnostics.Log("send", exception);
 			await DisplayAlert("发送失败", exception.Message, "确定");
 		}
 		finally
@@ -274,6 +310,7 @@ public partial class MainPage : ContentPage
 		}
 		catch (Exception exception)
 		{
+			MobileDiagnostics.Log("receive", exception);
 			await DisplayAlert("接收失败", exception.Message, "确定");
 		}
 		finally
