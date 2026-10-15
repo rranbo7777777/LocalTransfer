@@ -4,6 +4,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using LocalTransfer.Contracts.Pairing;
+using LocalTransfer.Contracts.Protocol;
 using QRCoder;
 // WinForms is referenced by this project as well, so the WPF types below need explicit aliases.
 using Brush = System.Windows.Media.Brush;
@@ -29,7 +30,7 @@ public partial class PairingWindow : Window
         _expiresAtUtc = bootstrap.ExpiresAtUtc;
 
         var remaining = bootstrap.ExpiresAtUtc - DateTimeOffset.UtcNow;
-        _window = remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMinutes(2);
+        _window = remaining > TimeSpan.Zero ? remaining : TransferTuning.PairingTicketLifetime;
 
         InitializeComponent();
         EndpointText.Text = bootstrap.Endpoint;

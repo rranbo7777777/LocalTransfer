@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Text.Json;
 using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Transfers;
 using LocalTransfer.Core.Transfers;
@@ -11,7 +12,8 @@ public sealed record OutboundTransferInfo(
     Guid DeviceId,
     FileManifest Manifest,
     TransferState State,
-    string? Error);
+    string? Error,
+    int ChunksServed = 0);
 
 public sealed record OutboundChunk(byte[] Content, string Sha256Hex);
 
@@ -19,13 +21,30 @@ public sealed class OutboundTransferCoordinator : IDisposable
 {
     // Terminal-state transfers are kept briefly so the peer can observe the final status,
     // then swept to bound dictionary growth in the long-running desktop service.
-    private static readonly TimeSpan TerminalRetention = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan TerminalRetention = TransferTuning.TerminalRetention;
+
+    private static readonly JsonSerializerOptions PersistOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ConcurrentDictionary<Guid, OutboundTransfer> _transfers = new();
+
+    private readonly object _persistGate = new();
+    private readonly string? _queueFilePath;
+
+    public OutboundTransferCoordinator(string? dataDirectory = null)
+    {
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return;
+        }
+
+        _queueFilePath = Path.Combine(dataDirectory, "outbound-queue.json");
+        RestoreQueue();
+    }
 
     public async Task<OutboundTransferInfo> EnqueueAsync(
         Guid deviceId,
         string sourcePath,
+        IProgress<double>? hashProgress = null,
         CancellationToken cancellationToken = default)
     {
         if (deviceId == Guid.Empty)
@@ -51,7 +70,36 @@ public sealed class OutboundTransferCoordinator : IDisposable
             128 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan))
         {
-            sha256Hex = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken));
+            if (hashProgress is null)
+            {
+                sha256Hex = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken));
+            }
+            else
+            {
+                // Hash in 1 MiB blocks and report whole-percent progress so the desktop UI can
+                // show movement on multi-gigabyte files instead of appearing frozen.
+                using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[1024 * 1024];
+                long totalRead = 0;
+                var lastReported = -1;
+                int read;
+                while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    hasher.AppendData(buffer, 0, read);
+                    totalRead += read;
+                    var percent = file.Length == 0
+                        ? 100
+                        : (int)Math.Min(99, totalRead * 100 / file.Length);
+                    if (percent != lastReported)
+                    {
+                        lastReported = percent;
+                        hashProgress.Report(percent);
+                    }
+                }
+
+                sha256Hex = Convert.ToHexString(hasher.GetHashAndReset());
+                hashProgress.Report(100);
+            }
         }
 
         file.Refresh();
@@ -71,6 +119,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
             throw new InvalidOperationException("Could not allocate a unique transfer identifier.");
         }
 
+        PersistQueue();
         return transfer.ToInfo();
     }
 
@@ -139,8 +188,15 @@ public sealed class OutboundTransferCoordinator : IDisposable
             {
                 transfer.Error = "The source file changed after it was queued.";
                 transfer.StateMachine.TransitionTo(TransferState.Failed);
+                PersistQueue();
                 throw new IOException(transfer.Error);
             }
+
+            // Track how much of the file the peer has pulled. The desktop "transfers" page turns
+            // this into a percentage; it is an upper bound on real progress (the peer may not have
+            // flushed every chunk it requested) but moves monotonically and is far better than a
+            // bare "transferring" label on a multi-gigabyte file.
+            transfer.RequestedChunks.Add(chunkIndex);
 
             var content = new byte[chunk.Length];
             await using var stream = new FileStream(
@@ -199,6 +255,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
 
             transfer.StateMachine.TransitionTo(TransferState.Verifying);
             transfer.StateMachine.TransitionTo(TransferState.Completed);
+            PersistQueue();
             return true;
         }
         finally
@@ -226,6 +283,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
             }
 
             transfer.StateMachine.TransitionTo(TransferState.Canceled);
+            PersistQueue();
             return true;
         }
         finally
@@ -255,6 +313,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
     private void SweepTerminalTransfers()
     {
         var now = DateTimeOffset.UtcNow;
+        var removed = false;
         foreach (var pair in _transfers)
         {
             var transfer = pair.Value;
@@ -269,8 +328,133 @@ public sealed class OutboundTransferCoordinator : IDisposable
             if (now - transfer.TerminalAtUtc.Value >= TerminalRetention)
             {
                 _transfers.TryRemove(pair.Key, out _);
+                removed = true;
             }
         }
+
+        if (removed)
+        {
+            PersistQueue();
+        }
+    }
+
+    private sealed record PersistedOutboundTransfer(
+        Guid TransferId,
+        Guid DeviceId,
+        string SourcePath,
+        FileManifest Manifest);
+
+    /// <summary>
+    /// Rewrites the on-disk queue file from the in-memory state. Only non-terminal transfers
+    /// are persisted, so a completed/canceled/failed transfer disappears from the file the
+    /// moment it reaches its terminal state. Persistence is best-effort: a failed write must
+    /// never abort the transfer operation that triggered it.
+    /// </summary>
+    private void PersistQueue()
+    {
+        if (_queueFilePath is null)
+        {
+            return;
+        }
+
+        var entries = _transfers.Values
+            .Where(transfer => transfer.StateMachine.State is not
+                (TransferState.Completed or TransferState.Failed or
+                TransferState.Canceled or TransferState.Rejected))
+            .Select(transfer => new PersistedOutboundTransfer(
+                transfer.Manifest.TransferId,
+                transfer.DeviceId,
+                transfer.SourcePath,
+                transfer.Manifest))
+            .ToArray();
+
+        try
+        {
+            lock (_persistGate)
+            {
+                File.WriteAllText(
+                    _queueFilePath,
+                    JsonSerializer.Serialize(entries, PersistOptions));
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Best-effort by design; the queue simply falls back to memory-only for this run.
+        }
+    }
+
+    /// <summary>
+    /// Re-queues the transfers persisted by <see cref="PersistQueue"/>. An entry only survives
+    /// when its source file still exists with the exact length and (within tolerance) the
+    /// timestamp recorded in the manifest — the same freshness rule <see cref="ReadChunkAsync"/>
+    /// enforces, so a stale entry fails here instead of failing mid-transfer later. Entries that
+    /// reference missing or changed files are dropped and purged from the file.
+    /// </summary>
+    private void RestoreQueue()
+    {
+        List<PersistedOutboundTransfer>? entries;
+        try
+        {
+            if (!File.Exists(_queueFilePath))
+            {
+                return;
+            }
+
+            entries = JsonSerializer.Deserialize<List<PersistedOutboundTransfer>>(
+                File.ReadAllText(_queueFilePath), PersistOptions);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            // A corrupt queue file must never keep the desktop service from starting.
+            return;
+        }
+
+        if (entries is null || entries.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            if (entry.TransferId == Guid.Empty ||
+                entry.DeviceId == Guid.Empty ||
+                string.IsNullOrWhiteSpace(entry.SourcePath) ||
+                entry.Manifest is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                entry.Manifest.Validate();
+            }
+            catch (ArgumentException)
+            {
+                continue;
+            }
+
+            var file = new FileInfo(entry.SourcePath);
+            if (!file.Exists ||
+                file.Length != entry.Manifest.Length ||
+                Math.Abs((file.LastWriteTimeUtc - entry.Manifest.LastModifiedUtc.UtcDateTime).TotalSeconds) > 2)
+            {
+                continue;
+            }
+
+            var transfer = new OutboundTransfer(entry.DeviceId, entry.SourcePath, entry.Manifest);
+            if (_transfers.TryAdd(entry.TransferId, transfer))
+            {
+                transfer.Restored = true;
+            }
+            else
+            {
+                transfer.Gate.Dispose();
+            }
+        }
+
+        PersistQueue();
     }
 
     private sealed class OutboundTransfer(Guid deviceId, string sourcePath, FileManifest manifest)
@@ -289,7 +473,13 @@ public sealed class OutboundTransferCoordinator : IDisposable
 
         public DateTimeOffset? TerminalAtUtc { get; set; }
 
+        /// <summary>Distinct chunk indexes the peer has requested while holding the gate.</summary>
+        public HashSet<int> RequestedChunks { get; } = new();
+
+        /// <summary>True when this instance came from the persisted queue, not a live enqueue.</summary>
+        public bool Restored { get; set; }
+
         public OutboundTransferInfo ToInfo() =>
-            new(Manifest.TransferId, DeviceId, Manifest, StateMachine.State, Error);
+            new(Manifest.TransferId, DeviceId, Manifest, StateMachine.State, Error, RequestedChunks.Count);
     }
 }

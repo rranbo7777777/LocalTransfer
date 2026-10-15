@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using LocalTransfer.Contracts.Pairing;
+using LocalTransfer.Contracts.Protocol;
 
 namespace LocalTransfer.Windows;
 
@@ -30,7 +31,7 @@ public partial class PairingApprovalWindow : Window
         // The window between the phone submitting and its bootstrap expiring is what the bar
         // represents; guard against a zero/negative span so the ratio stays meaningful.
         var span = deadline - request.RequestedAtUtc;
-        _window = span > TimeSpan.Zero ? span : TimeSpan.FromMinutes(2);
+        _window = span > TimeSpan.Zero ? span : TransferTuning.PairingTicketLifetime;
 
         InitializeComponent();
         DeviceNameText.Text = request.Device.DisplayName;

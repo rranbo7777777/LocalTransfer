@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Transfers;
 using LocalTransfer.Core.Transfers;
 using LocalTransfer.Infrastructure.Transfers;
@@ -13,7 +14,8 @@ public sealed record InboundTransferInfo(
     IReadOnlyList<int> MissingChunks,
     string? FinalPath,
     string? Error,
-    DateTimeOffset ExpiresAtUtc = default);
+    DateTimeOffset ExpiresAtUtc = default,
+    int ReceivedChunks = 0);
 
 public sealed class InboundTransferCoordinator : IAsyncDisposable
 {
@@ -21,14 +23,14 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
 
     /// <summary>
     /// How long an unanswered "may I send you this file?" prompt stays open. It has to outlast
-    /// the client's own approval wait (ten minutes, see <c>LocalTransferClient.UploadAsync</c>)
-    /// so a phone that is still polling never sees its offer disappear underneath it.
+    /// the client's own approval wait (<see cref="TransferTuning.ClientApprovalWait"/>) so a phone
+    /// that is still polling never sees its offer disappear underneath it.
     /// </summary>
-    public static readonly TimeSpan DefaultOfferLifetime = TimeSpan.FromMinutes(11);
+    public static readonly TimeSpan DefaultOfferLifetime = TransferTuning.OfferLifetime;
 
     // Terminal-state transfers are kept briefly so the peer can observe the final status,
     // then swept to bound dictionary growth in the long-running desktop service.
-    private static readonly TimeSpan TerminalRetention = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan TerminalRetention = TransferTuning.TerminalRetention;
 
     private readonly ConcurrentDictionary<Guid, InboundTransfer> _transfers = new();
     private readonly ResumableFileReceiver _receiver = new();
@@ -107,14 +109,17 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
     /// <summary>
     /// Snapshot of every inbound transfer regardless of device, for the desktop UI. The missing
     /// chunk list is omitted because computing it needs the async receiver and the UI only needs
-    /// a summary row.
+    /// a summary row; the synchronous <see cref="ReceiveSession.CompletedChunkCount"/> supplies
+    /// receive progress instead.
     /// </summary>
     public IReadOnlyList<InboundTransferInfo> GetAll()
     {
         SweepTerminalTransfers();
         SweepExpiredOffers();
         return _transfers.Values
-            .Select(transfer => transfer.ToInfo([]))
+            .Select(transfer => transfer.ToInfo(
+                [],
+                transfer.Session?.CompletedChunkCount ?? 0))
             .OrderBy(info => info.Manifest.FileName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
     }
@@ -199,7 +204,9 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         var missing = transfer.Session is null
             ? Array.Empty<int>()
             : await _receiver.GetMissingChunksAsync(transfer.Session, cancellationToken);
-        return transfer.ToInfo(missing);
+        return transfer.ToInfo(
+            missing,
+            transfer.Session?.CompletedChunkCount ?? 0);
     }
 
     public async Task WriteChunkAsync(
@@ -446,7 +453,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
 
         public DateTimeOffset? TerminalAtUtc { get; set; }
 
-        public InboundTransferInfo ToInfo(IReadOnlyList<int> missingChunks) =>
+        public InboundTransferInfo ToInfo(IReadOnlyList<int> missingChunks, int receivedChunks = 0) =>
             new(
                 Manifest.TransferId,
                 DeviceId,
@@ -455,6 +462,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
                 missingChunks,
                 FinalPath,
                 Error,
-                ExpiresAtUtc);
+                ExpiresAtUtc,
+                receivedChunks);
     }
 }

@@ -35,7 +35,7 @@ public sealed class PairingRateLimitTests
 
         // A client polls for as long as the desktop dialog stays open, so a minute of polling must
         // never be throttled. Double the client's own per-minute rate to keep headroom for retries.
-        var pollsPerMinute = (int)Math.Ceiling(TimeSpan.FromMinutes(1) / ProtocolConstants.PairingPollInterval);
+        var pollsPerMinute = (int)Math.Ceiling(TimeSpan.FromMinutes(1) / TransferTuning.PairingPollInterval);
         Assert.True(
             pollsPerMinute < CoordinatorHost.PairingPollPermitLimit,
             $"The client polls {pollsPerMinute} times per minute but the server only permits "

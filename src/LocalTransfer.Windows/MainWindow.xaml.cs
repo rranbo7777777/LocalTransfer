@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using LocalTransfer.Contracts.Pairing;
+using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Transfers;
 using LocalTransfer.Coordinator;
 using LocalTransfer.Coordinator.Devices;
@@ -45,7 +46,7 @@ public partial class MainWindow : Window
 
         // The queue and the inbound state both move while the user watches this page, so poll
         // only while it is visible instead of refreshing every page on a timer.
-        _transfersRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _transfersRefreshTimer = new DispatcherTimer { Interval = TransferTuning.DesktopTransfersRefreshInterval };
         _transfersRefreshTimer.Tick += OnTransfersRefreshTick;
 
         RefreshTrustedDevices();
@@ -210,12 +211,19 @@ public partial class MainWindow : Window
 
         SendButton.IsEnabled = false;
         SendButton.Content = "正在校验…";
+        // Progress<double> posts back to the WPF dispatcher, so multi-gigabyte hashing shows
+        // percentage movement on the button instead of a frozen "正在校验…".
+        var hashProgress = new Progress<double>(percent =>
+            SendButton.Content = percent >= 100 ? "校验完成…" : $"正在校验 {percent:0}%");
         var queuedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             foreach (var file in PendingFiles.ToArray())
             {
-                await _coordinator.OutboundTransfers.EnqueueAsync(device.DeviceId, file.FullPath);
+                await _coordinator.OutboundTransfers.EnqueueAsync(
+                    device.DeviceId,
+                    file.FullPath,
+                    hashProgress);
                 queuedPaths.Add(file.FullPath);
             }
 
@@ -399,7 +407,11 @@ public partial class MainWindow : Window
         foreach (var transfer in _coordinator.OutboundTransfers.GetAll()
                      .Where(item => IsActiveTransfer(item.State)))
         {
-            OutboundRows.Add(CreateTransferRow(transfer.Manifest, transfer.DeviceId, transfer.State));
+            OutboundRows.Add(CreateTransferRow(
+                transfer.Manifest,
+                transfer.DeviceId,
+                transfer.State,
+                progressChunks: transfer.ChunksServed));
         }
 
         InboundRows.Clear();
@@ -410,7 +422,8 @@ public partial class MainWindow : Window
                 transfer.Manifest,
                 transfer.DeviceId,
                 transfer.State,
-                transfer.ExpiresAtUtc));
+                transfer.ExpiresAtUtc,
+                transfer.ReceivedChunks));
         }
 
         EmptyOutboundText.Visibility = OutboundRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -421,14 +434,28 @@ public partial class MainWindow : Window
         FileManifest manifest,
         Guid deviceId,
         TransferState state,
-        DateTimeOffset expiresAtUtc = default) =>
-        new(
+        DateTimeOffset expiresAtUtc = default,
+        int progressChunks = 0)
+    {
+        var stateText = DescribeState(state, expiresAtUtc);
+        // A percentage on the row is what keeps a multi-gigabyte transfer from reading as
+        // "stuck"; 0% during the first chunk is still better than a bare "传输中".
+        if (state is TransferState.Transferring or TransferState.Verifying or TransferState.Completed)
+        {
+            var percent = manifest.ChunkCount == 0
+                ? 100
+                : Math.Min(100, progressChunks * 100 / manifest.ChunkCount);
+            stateText = $"{stateText} · {percent}%";
+        }
+
+        return new TransferRow(
             manifest.FileName,
             $"{FindDeviceName(deviceId)} · {FormatSize(manifest.Length)}",
-            DescribeState(state, expiresAtUtc),
+            stateText,
             ResolveStateSurface(state),
             ResolveStateForeground(state),
             $"{manifest.ChunkCount} 个分块");
+    }
 
     // The row carries its own brushes instead of relying on a converter so the same state text
     // reads the same way everywhere, and stays legible in both the sent and received lists.
@@ -716,7 +743,7 @@ public partial class MainWindow : Window
     {
         var device = TrustedDevices.FirstOrDefault(item => item.DeviceId == transfer.DeviceId);
         var deadline = transfer.ExpiresAtUtc == default
-            ? DateTimeOffset.UtcNow + TimeSpan.FromMinutes(10)
+            ? DateTimeOffset.UtcNow + TransferTuning.ClientApprovalWait
             : transfer.ExpiresAtUtc;
         var remaining = deadline - DateTimeOffset.UtcNow;
         var patienceNote = remaining > TimeSpan.Zero

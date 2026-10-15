@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using LocalTransfer.Contracts.Protocol;
 
 namespace LocalTransfer.Client;
 
@@ -36,7 +37,7 @@ internal static class PinnedHttpClientFactory
         return new HttpClient(handler)
         {
             BaseAddress = endpointUri,
-            Timeout = TimeSpan.FromMinutes(2)
+            Timeout = TransferTuning.HttpClientTimeout
         };
     }
 }

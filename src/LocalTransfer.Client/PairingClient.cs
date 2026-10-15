@@ -9,13 +9,6 @@ namespace LocalTransfer.Client;
 
 public static class PairingClient
 {
-    /// <summary>
-    /// How many times a single request is attempted before the failure is surfaced. The status
-    /// poll is rate limited per source address by the coordinator, so a 429 there is transient
-    /// and must not abort a pairing the user is still answering on the desktop.
-    /// </summary>
-    private const int MaxAttempts = 4;
-
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     public static async Task<CoordinatorConnection> PairAsync(
@@ -104,7 +97,7 @@ public static class PairingClient
                 throw new InvalidOperationException("The one-time pairing credential was already delivered.");
             }
 
-            await Task.Delay(ProtocolConstants.PairingPollInterval, cancellationToken);
+            await Task.Delay(TransferTuning.PairingPollInterval, cancellationToken);
         }
 
         throw new TimeoutException("The pairing request expired before it was approved.");
@@ -125,7 +118,7 @@ public static class PairingClient
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken);
-                if (attempt < MaxAttempts && ShouldRetry(response.StatusCode, isIdempotent))
+                if (attempt < TransferTuning.PairingMaxAttempts && ShouldRetry(response.StatusCode, isIdempotent))
                 {
                     response.Dispose();
                     await DelayBeforeRetryAsync(attempt, cancellationToken);
@@ -136,7 +129,7 @@ public static class PairingClient
             }
             catch (Exception exception) when (
                 isIdempotent &&
-                attempt < MaxAttempts &&
+                attempt < TransferTuning.PairingMaxAttempts &&
                 !cancellationToken.IsCancellationRequested &&
                 exception is HttpRequestException or TaskCanceledException)
             {
@@ -150,5 +143,5 @@ public static class PairingClient
         (isIdempotent && (int)statusCode >= 500);
 
     private static Task DelayBeforeRetryAsync(int attempt, CancellationToken cancellationToken) =>
-        Task.Delay(TimeSpan.FromMilliseconds(500 * attempt), cancellationToken);
+        Task.Delay(TransferTuning.PairingRetryBaseDelay * attempt, cancellationToken);
 }

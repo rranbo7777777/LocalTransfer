@@ -13,7 +13,7 @@ public sealed class PairingCoordinator
     // Requests whose client never polls (crash, abandoned pairing) must not accumulate:
     // every status is pruned once the entry outlives this window. Clients stop polling
     // when their bootstrap expires, which is bounded by the ticket lifetime (minutes).
-    private static readonly TimeSpan RequestRetention = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan RequestRetention = TransferTuning.PairingRequestRetention;
 
     private readonly PairingTicketService _tickets = new();
     private readonly ConcurrentDictionary<Guid, PendingPairingRequest> _requests = new();

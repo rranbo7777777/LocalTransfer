@@ -28,6 +28,12 @@ public sealed class ReceiveSession : IAsyncDisposable
 
     internal TransferCheckpoint Checkpoint { get; set; }
 
+    /// <summary>
+    /// Synchronous snapshot of how many chunks are already on disk. Used by the desktop UI to
+    /// render receive progress without the async checkpoint scan that GetMissingChunks performs.
+    /// </summary>
+    public int CompletedChunkCount => Checkpoint.CompletedChunks.Count;
+
     internal SemaphoreSlim Gate { get; } = new(1, 1);
 
     public ValueTask DisposeAsync()

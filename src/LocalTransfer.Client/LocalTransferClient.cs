@@ -60,7 +60,7 @@ public sealed class LocalTransferClient : IDisposable
 
         var status = await WaitForApprovalAsync(
             manifest.TransferId,
-            approvalTimeout ?? TimeSpan.FromMinutes(10),
+            approvalTimeout ?? TransferTuning.ClientApprovalWait,
             cancellationToken);
         var plan = new ChunkPlan(manifest);
         var missing = status.MissingChunks.Order().ToArray();
@@ -217,7 +217,7 @@ public sealed class LocalTransferClient : IDisposable
                 throw new InvalidOperationException(transfer.Error ?? $"The transfer is {transfer.State}.");
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(750), cancellationToken);
+            await Task.Delay(TransferTuning.TransferPollInterval, cancellationToken);
         }
 
         throw new TimeoutException("The computer did not approve the transfer before the timeout.");
@@ -246,21 +246,21 @@ public sealed class LocalTransferClient : IDisposable
                     throw new CoordinatorCredentialException();
                 }
 
-                if (attempt < 3 && IsTransient(response.StatusCode))
+                if (attempt < TransferTuning.TransferMaxAttempts && IsTransient(response.StatusCode))
                 {
                     response.Dispose();
-                    await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
+                    await Task.Delay(TransferTuning.TransferRetryBaseDelay * attempt, cancellationToken);
                     continue;
                 }
 
                 return response;
             }
             catch (Exception exception) when (
-                attempt < 3 &&
+                attempt < TransferTuning.TransferMaxAttempts &&
                 !cancellationToken.IsCancellationRequested &&
                 exception is HttpRequestException or TaskCanceledException)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
+                await Task.Delay(TransferTuning.TransferRetryBaseDelay * attempt, cancellationToken);
             }
         }
     }

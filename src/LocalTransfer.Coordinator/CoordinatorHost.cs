@@ -39,7 +39,7 @@ public sealed class CoordinatorHost : IAsyncDisposable
         TrustedDevices = new TrustedDeviceStore(_options.DataDirectory);
         Pairing = new PairingCoordinator(TrustedDevices);
         InboundTransfers = new InboundTransferCoordinator(_options.ReceiveDirectory);
-        OutboundTransfers = new OutboundTransferCoordinator();
+        OutboundTransfers = new OutboundTransferCoordinator(_options.DataDirectory);
     }
 
     public PairingCoordinator Pairing { get; }
@@ -111,7 +111,7 @@ public sealed class CoordinatorHost : IAsyncDisposable
                         {
                             // Cheap to create and consumes a one-time ticket; keep this tight.
                             PermitLimit = PairingSubmitPermitLimit,
-                            Window = TimeSpan.FromMinutes(1),
+                            Window = TransferTuning.PairingRateLimitWindow,
                             QueueLimit = 0
                         }));
                 options.AddPolicy(PairingPollRateLimitPolicy, context =>
@@ -119,10 +119,10 @@ public sealed class CoordinatorHost : IAsyncDisposable
                         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                         _ => new FixedWindowRateLimiterOptions
                         {
-                            // Must stay well above 60 / ProtocolConstants.PairingPollInterval
+                            // Must stay well above 60 / TransferTuning.PairingPollInterval
                             // (30/min) so a slow human cannot exhaust the budget mid-pairing.
                             PermitLimit = PairingPollPermitLimit,
-                            Window = TimeSpan.FromMinutes(1),
+                            Window = TransferTuning.PairingRateLimitWindow,
                             QueueLimit = 0
                         }));
             });
@@ -159,7 +159,7 @@ public sealed class CoordinatorHost : IAsyncDisposable
             throw new InvalidOperationException("The coordinator is not running.");
         }
 
-        PairingTicket ticket = Pairing.CreateTicket(lifetime ?? TimeSpan.FromMinutes(2));
+        PairingTicket ticket = Pairing.CreateTicket(lifetime ?? TransferTuning.PairingTicketLifetime);
         return new PairingBootstrap(
             Endpoint,
             LocalCertificateProvider.GetSha256Fingerprint(certificate),
@@ -468,14 +468,14 @@ public sealed class CoordinatorHost : IAsyncDisposable
     }
 
     /// <summary>Permits per minute and source address for the one-time-ticket submission endpoint.</summary>
-    public const int PairingSubmitPermitLimit = 30;
+    public const int PairingSubmitPermitLimit = TransferTuning.PairingSubmitPermitLimit;
 
     /// <summary>
     /// Permits per minute and source address for the pairing status poll. Must stay comfortably
-    /// above the client's own poll rate (60 / <see cref="ProtocolConstants.PairingPollInterval"/>)
+    /// above the client's own poll rate (60 / <see cref="TransferTuning.PairingPollInterval"/>)
     /// or a slow human answering the desktop dialog will exhaust the budget and break pairing.
     /// </summary>
-    public const int PairingPollPermitLimit = 240;
+    public const int PairingPollPermitLimit = TransferTuning.PairingPollPermitLimit;
 
     private const string PairingSubmitRateLimitPolicy = "pairing-submit";
 
