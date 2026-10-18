@@ -73,11 +73,92 @@ public static class TransferTuning
     /// <summary>Delay between upload-approval polls on the client.</summary>
     public static readonly TimeSpan TransferPollInterval = TimeSpan.FromMilliseconds(750);
 
-    /// <summary>Base delay before retrying a transfer request; multiplied by the attempt number.</summary>
+    /// <summary>
+    /// Base delay before retrying a transfer request. The delay grows exponentially (×3 per
+    /// attempt) up to <see cref="TransferRetryMaxDelay"/>.
+    /// <para>
+    /// A flat sub-second backoff was the reason a brief Wi-Fi drop turned into a permanent
+    /// failure: the three attempts it allowed had all expired long before the interface came
+    /// back, so the transfer was abandoned even though the coordinator still held every chunk
+    /// that had already arrived.
+    /// </para>
+    /// </summary>
     public static readonly TimeSpan TransferRetryBaseDelay = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>Upper bound of a single retry backoff step.</summary>
+    public static readonly TimeSpan TransferRetryMaxDelay = TimeSpan.FromSeconds(10);
+
     /// <summary>Attempts per transfer request before the failure is surfaced.</summary>
-    public const int TransferMaxAttempts = 3;
+    public const int TransferMaxAttempts = 5;
+
+    /// <summary>
+    /// Backoff before retry number <paramref name="attempt"/> (1-based): exponential from
+    /// <see cref="TransferRetryBaseDelay"/>, capped at <see cref="TransferRetryMaxDelay"/>.
+    /// </summary>
+    public static TimeSpan GetTransferRetryDelay(int attempt)
+    {
+        if (attempt < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(attempt));
+        }
+
+        var scaled = TransferRetryBaseDelay.Ticks * Math.Pow(3, attempt - 1);
+        return scaled >= TransferRetryMaxDelay.Ticks
+            ? TransferRetryMaxDelay
+            : TimeSpan.FromTicks((long)scaled);
+    }
+
+    /// <summary>
+    /// Worst-case time a single request spends waiting between its attempts. Callers that must
+    /// bound a poll loop (see the pairing and transfer poll budgets) use this instead of
+    /// assuming a linear backoff.
+    /// </summary>
+    public static TimeSpan TotalTransferRetryDelay
+    {
+        get
+        {
+            var total = TimeSpan.Zero;
+            for (var attempt = 1; attempt < TransferMaxAttempts; attempt++)
+            {
+                total += GetTransferRetryDelay(attempt);
+            }
+
+            return total;
+        }
+    }
+
+    /// <summary>
+    /// How long the client keeps resuming one upload after transient failures before giving up.
+    /// The coordinator retains its per-chunk checkpoint for this whole window, so a transfer that
+    /// survives a network blip resumes from where it stopped instead of starting over.
+    /// </summary>
+    public static readonly TimeSpan TransferRecoveryBudget = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// Delay between recovery rounds once a round failed. Kept short: the round also probes the
+    /// coordinator's health endpoint, which is what actually decides when to keep going.
+    /// </summary>
+    public static readonly TimeSpan TransferRecoveryRetryDelay = TimeSpan.FromSeconds(3);
+
+    /// <summary>Timeout of the health probe used to decide whether the network is back.</summary>
+    public static readonly TimeSpan RecoveryProbeTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// How long the client waits for a batch approval. Longer than a single offer because the
+    /// desktop reviews a list rather than answering one prompt, and it has to outlive the
+    /// coordinator's own offer lifetime or the client gives up while the desktop is still deciding.
+    /// </summary>
+    public static readonly TimeSpan BatchApprovalTimeout = OfferLifetime + TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// How many recovery rounds in a row may make zero progress before the upload gives up.
+    /// <para>
+    /// A round that fails without moving a single byte means the source itself is unusable (a
+    /// revoked content-URI grant, a file deleted mid-transfer). Retrying that for the whole
+    /// recovery budget would hold the UI for half an hour to reach the same error.
+    /// </para>
+    /// </summary>
+    public const int MaxStalledRecoveryRounds = 3;
 
     /// <summary>
     /// How long a terminal-state transfer is kept so the peer can still observe the final status.

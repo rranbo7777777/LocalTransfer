@@ -29,6 +29,37 @@ internal static class MobileDiagnostics
         }
     }
 
+    /// <summary>
+    /// Records a plain diagnostic line. The transfer pipeline uses this so a resumed upload leaves
+    /// evidence of which recovery round ran and how much it still had to send.
+    /// </summary>
+    public static void Log(string context, string message)
+    {
+        try
+        {
+            var path = TryGetLogPath();
+            if (path is null)
+            {
+                return;
+            }
+
+            var entry = new StringBuilder()
+                .Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"))
+                .Append(" [").Append(context).Append("] ")
+                .AppendLine(message)
+                .ToString();
+
+            lock (Gate)
+            {
+                File.AppendAllText(path, entry);
+            }
+        }
+        catch
+        {
+            // Diagnostics must never take the app down.
+        }
+    }
+
     public static void Log(string context, Exception exception)
     {
         try

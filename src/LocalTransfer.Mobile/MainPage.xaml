@@ -124,7 +124,14 @@
                 <Label x:Name="TransferStatusLabel" HorizontalTextAlignment="Center"
                        FontSize="12" TextColor="{StaticResource LtTextSecondary}"
                        Text="正在准备…" />
+                <Button x:Name="CancelTransferButton" IsVisible="False" HorizontalOptions="Center"
+                        Padding="24,0"
+                        Style="{StaticResource LtDangerGhostAction}"
+                        Clicked="OnCancelTransferClicked" Text="取消" />
             </VerticalStackLayout>
+
+            <Button x:Name="ShareLogButton" Style="{StaticResource LtSecondaryAction}"
+                    Clicked="OnShareLogClicked" Text="导出诊断日志" />
 
             <Label HorizontalTextAlignment="Center" Style="{StaticResource LtMuted}"
                    Text="协议版本 1 · 当前为内部开发版本" />

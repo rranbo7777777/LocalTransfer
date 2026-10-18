@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Transfers;
+using LocalTransfer.Coordinator.History;
 using LocalTransfer.Core.Transfers;
 using LocalTransfer.Infrastructure.Transfers;
 
@@ -16,6 +17,16 @@ public sealed record InboundTransferInfo(
     string? Error,
     DateTimeOffset ExpiresAtUtc = default,
     int ReceivedChunks = 0);
+
+/// <summary>
+/// One confirmation prompt covering a whole batch, instead of one prompt per file. The desktop
+/// shows the list and answers once.
+/// </summary>
+public sealed record InboundBatchInfo(
+    Guid BatchId,
+    Guid DeviceId,
+    IReadOnlyList<InboundTransferInfo> Files,
+    DateTimeOffset ExpiresAtUtc);
 
 public sealed class InboundTransferCoordinator : IAsyncDisposable
 {
@@ -33,15 +44,23 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
     private static readonly TimeSpan TerminalRetention = TransferTuning.TerminalRetention;
 
     private readonly ConcurrentDictionary<Guid, InboundTransfer> _transfers = new();
+
+    /// <summary>Batches whose confirmation prompt is still open, keyed by batch id.</summary>
+    private readonly ConcurrentDictionary<Guid, PendingBatch> _batches = new();
     private readonly ResumableFileReceiver _receiver = new();
     private readonly string _receiveDirectory;
     private readonly TimeSpan _offerLifetime;
+    private readonly TransferHistoryStore? _history;
 
-    public InboundTransferCoordinator(string receiveDirectory, TimeSpan? offerLifetime = null)
+    public InboundTransferCoordinator(
+        string receiveDirectory,
+        TimeSpan? offerLifetime = null,
+        TransferHistoryStore? history = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(receiveDirectory);
         _receiveDirectory = Path.GetFullPath(receiveDirectory);
         _offerLifetime = offerLifetime ?? DefaultOfferLifetime;
+        _history = history;
         if (_offerLifetime <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
@@ -53,6 +72,12 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
     }
 
     public event EventHandler<InboundTransferInfo>? TransferOffered;
+
+    /// <summary>
+    /// Raised once per batch instead of once per file. Subscribers answer with
+    /// <see cref="ApproveBatchAsync"/> or <see cref="RejectBatchAsync"/>.
+    /// </summary>
+    public event EventHandler<InboundBatchInfo>? BatchOffered;
 
     public InboundTransferInfo SubmitOffer(Guid deviceId, FileManifest manifest)
     {
@@ -66,16 +91,10 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         // Expiring first is what keeps the per-device cap below meaningful: an unanswered prompt
         // gives its slot back instead of counting against the phone forever.
         SweepExpiredOffers();
-        var transfer = new InboundTransfer(deviceId, manifest, DateTimeOffset.UtcNow.Add(_offerLifetime));
-        if (!_transfers.TryAdd(manifest.TransferId, transfer))
+        var (transfer, created) = CreateTransfer(deviceId, manifest);
+        if (!created)
         {
-            var existing = _transfers[manifest.TransferId];
-            if (existing.DeviceId != deviceId || existing.Manifest != manifest)
-            {
-                throw new InvalidOperationException("The transfer identifier is already in use.");
-            }
-
-            return existing.ToInfo([]);
+            return transfer.ToInfo([]);
         }
 
         // The cap applies to new offers only; a retried submission of an already-registered
@@ -92,8 +111,178 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         }
 
         var info = transfer.ToInfo([]);
+        CoordinatorLog.Write(
+            $"offer {manifest.TransferId:N} from device {deviceId:N}: " +
+            $"\"{manifest.FileName}\" {manifest.Length} bytes in {manifest.ChunkCount} chunk(s)");
         TransferOffered?.Invoke(this, info);
         return info;
+    }
+
+    /// <summary>
+    /// Registers every file of a batch, raises a single confirmation prompt, and returns only once
+    /// the desktop has answered.
+    /// <para>
+    /// This is what replaces N prompts with one. A hundred files used to mean a hundred modal
+    /// dialogs, each with its own ten-minute window, which made sending a batch effectively
+    /// unusable no matter how reliable the transfer itself was.
+    /// </para>
+    /// <para>
+    /// The per-device pending-offer cap does not apply here: the cap exists to stop prompts piling
+    /// up, and a batch is exactly one prompt.
+    /// </para>
+    /// </summary>
+    public async Task<BatchSubmissionResult> SubmitBatchAsync(
+        Guid deviceId,
+        Guid batchId,
+        IReadOnlyList<FileManifest> manifests,
+        CancellationToken cancellationToken = default)
+    {
+        if (deviceId == Guid.Empty)
+        {
+            throw new ArgumentException("A device identifier is required.", nameof(deviceId));
+        }
+
+        if (batchId == Guid.Empty)
+        {
+            throw new ArgumentException("A batch identifier is required.", nameof(batchId));
+        }
+
+        ArgumentNullException.ThrowIfNull(manifests);
+        if (manifests.Count == 0)
+        {
+            throw new ArgumentException("A batch needs at least one file.", nameof(manifests));
+        }
+
+        if (manifests.Count > BatchLimits.MaxFiles)
+        {
+            throw new ArgumentException(
+                $"A batch may contain at most {BatchLimits.MaxFiles} files.",
+                nameof(manifests));
+        }
+
+        foreach (var manifest in manifests)
+        {
+            manifest.Validate();
+        }
+
+        SweepTerminalTransfers();
+        SweepExpiredOffers();
+
+        var transfers = new List<InboundTransfer>(manifests.Count);
+        try
+        {
+            foreach (var manifest in manifests)
+            {
+                transfers.Add(CreateTransfer(deviceId, manifest).Transfer);
+            }
+        }
+        catch
+        {
+            // Half a batch is worse than none: roll back so a retry starts clean.
+            RollBack(transfers);
+            throw;
+        }
+
+        var pending = new PendingBatch(
+            deviceId,
+            transfers,
+            new TaskCompletionSource<HashSet<Guid>>(TaskCreationOptions.RunContinuationsAsynchronously));
+        if (!_batches.TryAdd(batchId, pending))
+        {
+            RollBack(transfers);
+            throw new InvalidOperationException("The batch identifier is already in use.");
+        }
+
+        CoordinatorLog.Write(
+            $"batch {batchId:N} from device {deviceId:N}: {manifests.Count} file(s), " +
+            $"{manifests.Sum(manifest => manifest.Length)} bytes");
+
+        BatchOffered?.Invoke(
+            this,
+            new InboundBatchInfo(
+                batchId,
+                deviceId,
+                transfers.Select(transfer => transfer.ToInfo([])).ToArray(),
+                transfers.Min(transfer => transfer.ExpiresAtUtc)));
+
+        HashSet<Guid> accepted;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_offerLifetime);
+        try
+        {
+            accepted = await pending.Completion.Task.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Nobody answered in time, or the phone hung up. Close the batch so its files do not
+            // sit in WaitingForApproval and keep their slots.
+            accepted = [];
+            await RejectBatchAsync(batchId, deviceId);
+        }
+
+        var acceptedIds = transfers
+            .Where(transfer => accepted.Contains(transfer.Manifest.TransferId))
+            .Select(transfer => transfer.Manifest.TransferId)
+            .ToArray();
+        var rejectedIds = transfers
+            .Where(transfer => !accepted.Contains(transfer.Manifest.TransferId))
+            .Select(transfer => transfer.Manifest.TransferId)
+            .ToArray();
+
+        return new BatchSubmissionResult(batchId, acceptedIds, rejectedIds);
+    }
+
+    /// <summary>
+    /// Answers a batch: the listed transfers are approved (which opens their receive session) and
+    /// the rest are rejected. Idempotent - a second answer for the same batch returns false.
+    /// </summary>
+    public async Task<bool> ApproveBatchAsync(
+        Guid batchId,
+        Guid deviceId,
+        IReadOnlySet<Guid> acceptedTransferIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(acceptedTransferIds);
+        if (!_batches.TryGetValue(batchId, out var batch) || batch.DeviceId != deviceId)
+        {
+            return false;
+        }
+
+        await batch.AnswerAsync(async transfer =>
+        {
+            if (acceptedTransferIds.Contains(transfer.Manifest.TransferId))
+            {
+                await ApproveAsync(transfer.Manifest.TransferId, cancellationToken);
+            }
+            else
+            {
+                await RejectAsync(transfer.Manifest.TransferId, cancellationToken);
+            }
+        });
+
+        _batches.TryRemove(batchId, out _);
+        batch.Completion.TrySetResult(new HashSet<Guid>(acceptedTransferIds));
+        CoordinatorLog.Write(
+            $"batch {batchId:N} answered: {acceptedTransferIds.Count} of {batch.Transfers.Count} accepted");
+        return true;
+    }
+
+    /// <summary>Rejects every file of a batch in one go.</summary>
+    public async Task<bool> RejectBatchAsync(
+        Guid batchId,
+        Guid deviceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_batches.TryGetValue(batchId, out var batch) || batch.DeviceId != deviceId)
+        {
+            return false;
+        }
+
+        await batch.AnswerAsync(transfer => RejectAsync(transfer.Manifest.TransferId, cancellationToken));
+        _batches.TryRemove(batchId, out _);
+        batch.Completion.TrySetResult([]);
+        CoordinatorLog.Write($"batch {batchId:N} rejected");
+        return true;
     }
 
     public IReadOnlyList<InboundTransferInfo> GetPendingOffers()
@@ -145,16 +334,21 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             if (DateTimeOffset.UtcNow > transfer.ExpiresAtUtc)
             {
                 transfer.StateMachine.TransitionTo(TransferState.Rejected);
+                CoordinatorLog.Write(
+                    $"approve {transferId:N} refused: the offer expired at {transfer.ExpiresAtUtc:u}");
                 return false;
             }
 
             transfer.Session = await _receiver.OpenAsync(transfer.Manifest, _receiveDirectory, cancellationToken);
             transfer.StateMachine.TransitionTo(TransferState.Queued);
+            CoordinatorLog.Write($"approve {transferId:N}: queued for receiving");
             return true;
         }
         catch (Exception exception)
         {
             transfer.Error = DescribeFailure(exception);
+            CoordinatorLog.Write(
+                $"approve {transferId:N} failed: {exception.GetType().Name}: {exception.Message}");
             throw;
         }
         finally
@@ -181,6 +375,7 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             }
 
             transfer.StateMachine.TransitionTo(TransferState.Rejected);
+            CoordinatorLog.Write($"reject {transferId:N}: refused on the desktop");
             return true;
         }
         finally
@@ -246,6 +441,8 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
         catch (Exception exception)
         {
             transfer.Error = DescribeFailure(exception);
+            CoordinatorLog.Write(
+                $"chunk {chunkIndex} of {transferId:N} failed: {exception.GetType().Name}: {exception.Message}");
             throw;
         }
         finally
@@ -288,12 +485,17 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             {
                 transfer.FinalPath = await _receiver.CompleteAsync(transfer.Session, cancellationToken);
                 transfer.StateMachine.TransitionTo(TransferState.Completed);
+                CoordinatorLog.Write(
+                    $"completed {transferId:N}: \"{transfer.Manifest.FileName}\" -> " +
+                    $"\"{Path.GetFileName(transfer.FinalPath)}\"");
                 return transfer.FinalPath;
             }
             catch (Exception exception)
             {
                 transfer.Error = DescribeFailure(exception);
                 transfer.StateMachine.TransitionTo(TransferState.Failed);
+                CoordinatorLog.Write(
+                    $"complete {transferId:N} failed: {exception.GetType().Name}: {exception.Message}");
                 throw;
             }
         }
@@ -346,6 +548,72 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
 
             transfer.Gate.Dispose();
         }
+    }
+
+    private (InboundTransfer Transfer, bool Created) CreateTransfer(Guid deviceId, FileManifest manifest)
+    {
+        var transfer = new InboundTransfer(deviceId, manifest, DateTimeOffset.UtcNow.Add(_offerLifetime));
+
+        // Recording on the terminal transition rather than at each call site keeps every way of
+        // ending a transfer (completed, rejected, expired, cancelled) in the history, with no path
+        // able to forget it.
+        transfer.StateMachine.StateChanged += (_, state) =>
+        {
+            if (ToOutcome(state) is { } outcome)
+            {
+                RecordTerminal(transfer, outcome);
+            }
+        };
+
+        if (_transfers.TryAdd(manifest.TransferId, transfer))
+        {
+            return (transfer, true);
+        }
+
+        var existing = _transfers[manifest.TransferId];
+        if (existing.DeviceId != deviceId || existing.Manifest != manifest)
+        {
+            throw new InvalidOperationException("The transfer identifier is already in use.");
+        }
+
+        return (existing, false);
+    }
+
+    /// <summary>Drops transfers registered by a batch that could not be completed.</summary>
+    private void RollBack(IEnumerable<InboundTransfer> transfers)
+    {
+        foreach (var transfer in transfers)
+        {
+            _transfers.TryRemove(transfer.Manifest.TransferId, out _);
+            transfer.Gate.Dispose();
+        }
+    }
+
+    private static TransferOutcome? ToOutcome(TransferState state) => state switch
+    {
+        TransferState.Completed => TransferOutcome.Completed,
+        TransferState.Failed => TransferOutcome.Failed,
+        TransferState.Rejected => TransferOutcome.Rejected,
+        TransferState.Canceled => TransferOutcome.Canceled,
+        _ => null
+    };
+
+    private void RecordTerminal(InboundTransfer transfer, TransferOutcome outcome)
+    {
+        if (_history is null || Interlocked.Exchange(ref transfer.HistoryRecorded, 1) != 0)
+        {
+            return;
+        }
+
+        _history.Append(new TransferHistoryEntry(
+            transfer.Manifest.TransferId,
+            transfer.DeviceId,
+            TransferDirection.Inbound,
+            transfer.Manifest.FileName,
+            transfer.Manifest.Length,
+            DateTimeOffset.UtcNow,
+            outcome,
+            transfer.Error));
     }
 
     private InboundTransfer GetOwnedTransfer(Guid transferId, Guid deviceId)
@@ -416,6 +684,9 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
                 if (transfer.StateMachine.State == TransferState.WaitingForApproval)
                 {
                     transfer.StateMachine.TransitionTo(TransferState.Rejected);
+                    CoordinatorLog.Write(
+                        $"offer {transfer.Manifest.TransferId:N} expired unanswered; " +
+                        "its per-device slot is released again");
                 }
             }
             finally
@@ -432,9 +703,43 @@ public sealed class InboundTransferCoordinator : IAsyncDisposable
             ? "A local file error occurred."
             : exception.Message;
 
+    /// <summary>
+    /// A batch whose prompt is still open, plus the single-use latch that keeps a late timeout and
+    /// a user click from both driving the same transfers.
+    /// </summary>
+    private sealed class PendingBatch(
+        Guid deviceId,
+        IReadOnlyList<InboundTransfer> transfers,
+        TaskCompletionSource<HashSet<Guid>> completion)
+    {
+        private int _answered;
+
+        public Guid DeviceId { get; } = deviceId;
+
+        public IReadOnlyList<InboundTransfer> Transfers { get; } = transfers;
+
+        public TaskCompletionSource<HashSet<Guid>> Completion { get; } = completion;
+
+        public async Task AnswerAsync(Func<InboundTransfer, Task> answer)
+        {
+            if (Interlocked.Exchange(ref _answered, 1) != 0)
+            {
+                return;
+            }
+
+            foreach (var transfer in Transfers)
+            {
+                await answer(transfer);
+            }
+        }
+    }
+
     private sealed class InboundTransfer(Guid deviceId, FileManifest manifest, DateTimeOffset expiresAtUtc)
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
+
+        /// <summary>Guards against recording the same transfer in the history twice.</summary>
+        public int HistoryRecorded;
 
         public Guid DeviceId { get; } = deviceId;
 

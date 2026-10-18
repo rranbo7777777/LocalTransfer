@@ -6,7 +6,10 @@ namespace LocalTransfer.Client;
 
 internal static class PinnedHttpClientFactory
 {
-    public static HttpClient Create(string endpoint, string expectedSha256)
+    public static HttpClient Create(
+        string endpoint,
+        string expectedSha256,
+        TimeSpan? timeout = null)
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) ||
             endpointUri.Scheme != Uri.UriSchemeHttps)
@@ -37,7 +40,10 @@ internal static class PinnedHttpClientFactory
         return new HttpClient(handler)
         {
             BaseAddress = endpointUri,
-            Timeout = TransferTuning.HttpClientTimeout
+
+            // Defaults to the regular per-request budget. Batch approvals pass a longer one because
+            // that call stays open until a human answers, which can be minutes.
+            Timeout = timeout ?? TransferTuning.HttpClientTimeout
         };
     }
 }

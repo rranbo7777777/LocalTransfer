@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.RateLimiting;
@@ -5,6 +6,8 @@ using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Pairing;
 using LocalTransfer.Contracts.Transfers;
 using LocalTransfer.Coordinator.Devices;
+using LocalTransfer.Coordinator.Discovery;
+using LocalTransfer.Coordinator.History;
 using LocalTransfer.Coordinator.Pairing;
 using LocalTransfer.Coordinator.Security;
 using LocalTransfer.Coordinator.Transfers;
@@ -27,6 +30,7 @@ public sealed class CoordinatorHost : IAsyncDisposable
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private WebApplication? _application;
     private X509Certificate2? _certificate;
+    private MulticastAnnouncer? _announcer;
 
     public CoordinatorHost(
         CoordinatorOptions? options = null,
@@ -36,13 +40,18 @@ public sealed class CoordinatorHost : IAsyncDisposable
         _certificateFactory = certificateFactory ?? (() => new LocalCertificateProvider().GetOrCreate());
         Directory.CreateDirectory(_options.DataDirectory);
         Directory.CreateDirectory(_options.ReceiveDirectory);
+        CoordinatorLog.Initialize(_options.DataDirectory);
         TrustedDevices = new TrustedDeviceStore(_options.DataDirectory);
+        History = new TransferHistoryStore(_options.DataDirectory);
         Pairing = new PairingCoordinator(TrustedDevices);
-        InboundTransfers = new InboundTransferCoordinator(_options.ReceiveDirectory);
-        OutboundTransfers = new OutboundTransferCoordinator(_options.DataDirectory);
+        InboundTransfers = new InboundTransferCoordinator(_options.ReceiveDirectory, history: History);
+        OutboundTransfers = new OutboundTransferCoordinator(_options.DataDirectory, History);
     }
 
     public PairingCoordinator Pairing { get; }
+
+    /// <summary>Terminal-state record for both directions; backs the history page.</summary>
+    public TransferHistoryStore History { get; }
 
     public TrustedDeviceStore TrustedDevices { get; }
 
@@ -129,12 +138,14 @@ public sealed class CoordinatorHost : IAsyncDisposable
 
             var application = builder.Build();
             application.UseRateLimiter();
+            application.Use(EnforcePerAddressLimit());
             MapEndpoints(application);
 
             try
             {
                 await application.StartAsync(cancellationToken);
                 _application = application;
+                StartDiscovery(certificate);
             }
             catch
             {
@@ -174,6 +185,12 @@ public sealed class CoordinatorHost : IAsyncDisposable
         try
         {
             var application = Interlocked.Exchange(ref _application, null);
+            if (_announcer is not null)
+            {
+                await _announcer.DisposeAsync();
+                _announcer = null;
+            }
+
             if (application is not null)
             {
                 await application.StopAsync(cancellationToken);
@@ -189,6 +206,36 @@ public sealed class CoordinatorHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Starts the discovery broadcast.
+    /// <para>
+    /// A failure here is logged and swallowed: a computer that cannot announce itself is still
+    /// perfectly usable through the QR code, so it must never be why startup fails.
+    /// </para>
+    /// </summary>
+    private void StartDiscovery(X509Certificate2 certificate)
+    {
+        try
+        {
+            var advertised = GetAdvertisedAddress();
+            _announcer = new MulticastAnnouncer(
+                Endpoint,
+                LocalCertificateProvider.GetSha256Fingerprint(certificate),
+                Environment.MachineName,
+                advertised.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+                    ? advertised
+                    : null);
+            _announcer.Start();
+            CoordinatorLog.Write($"discovery: announcing {Endpoint} on the multicast group");
+        }
+        catch (Exception exception)
+        {
+            _announcer = null;
+            CoordinatorLog.Write(
+                $"discovery: could not start: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
@@ -199,9 +246,63 @@ public sealed class CoordinatorHost : IAsyncDisposable
     private void ConfigureKestrel(KestrelServerOptions serverOptions, X509Certificate2 certificate)
     {
         serverOptions.AddServerHeader = false;
-        serverOptions.Limits.MaxRequestBodySize = ProtocolConstants.DefaultChunkSize + (64 * 1024);
+
+        // One chunk per request, plus a margin. The previous bound sat exactly one chunk size above
+        // the body, so anything that pushed a request a few bytes over - a larger peer-declared
+        // chunk size, a protocol bump - would have surfaced as a silent 413 the client never retries.
+        serverOptions.Limits.MaxRequestBodySize = ProtocolConstants.MaxChunkSize + (1024 * 1024);
+
+        // A backgrounded phone uploading over a weak link can idle well past the 5 s default grace
+        // period, and Kestrel aborts the request when the body rate drops under 240 B/s. Relax the
+        // floor and stretch the grace period instead of losing the transfer to a speed heuristic.
+        serverOptions.Limits.MinRequestBodyDataRate = new MinDataRate(
+            bytesPerSecond: 100,
+            gracePeriod: TimeSpan.FromSeconds(30));
+
+        // The phone may sit on the approval dialog (inbound) or poll for queued files (outbound)
+        // between requests, so keep idle connections around longer than the 130 s default.
+        serverOptions.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(3);
+
+        // Bound the descriptors this process holds. A single peer cannot exceed this today because
+        // it talks to one device at a time, but the LAN limit keeps a misbehaving peer contained.
+        serverOptions.Limits.MaxConcurrentConnections = 64;
+
         serverOptions.Listen(_options.ListenAddress, _options.Port, listenOptions =>
             listenOptions.UseHttps(certificate));
+    }
+
+    /// <summary>
+    /// Caps how many requests one peer may hold at once. Kestrel's own limit is global, so without
+    /// this a single misbehaving client could occupy every slot and lock out the real phone.
+    /// </summary>
+    private static Func<HttpContext, Func<Task>, Task> EnforcePerAddressLimit()
+    {
+        var limiter = new PerAddressLimiter();
+        return async (context, next) =>
+        {
+            var address = context.Connection.RemoteIpAddress;
+            if (address is null || IPAddress.IsLoopback(address))
+            {
+                // The desktop's own UI talks to it over loopback; never throttle that.
+                await next();
+                return;
+            }
+
+            if (!limiter.TryAcquire(address))
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                return;
+            }
+
+            try
+            {
+                await next();
+            }
+            finally
+            {
+                limiter.Release(address);
+            }
+        };
     }
 
     private void MapEndpoints(WebApplication application)
@@ -249,6 +350,38 @@ public sealed class CoordinatorHost : IAsyncDisposable
             try
             {
                 return Results.Accepted(value: InboundTransfers.SubmitOffer(deviceId, manifest));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Conflict(new { error = exception.Message });
+            }
+        });
+
+        // One prompt for a whole batch. The handler deliberately does not return until the desktop
+        // has answered: the client waits on this response instead of polling per file, which is
+        // what turns N confirmations into one.
+        application.MapPost("/api/v1/batches", async (
+            HttpRequest request,
+            BatchSubmission submission,
+            CancellationToken cancellationToken) =>
+        {
+            if (!TryAuthenticate(request, out var deviceId))
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var result = await InboundTransfers.SubmitBatchAsync(
+                    deviceId,
+                    submission.BatchId,
+                    submission.Files,
+                    cancellationToken);
+                return Results.Ok(result);
             }
             catch (ArgumentException exception)
             {
@@ -504,6 +637,62 @@ public sealed class CoordinatorHost : IAsyncDisposable
         address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
             ? $"[{address}]"
             : address.ToString();
+
+    /// <summary>
+    /// Counts in-flight requests per peer address. A single phone uses a handful - one upload, one
+    /// status poll - so the cap only ever trips for something misbehaving.
+    /// </summary>
+    private sealed class PerAddressLimiter
+    {
+        private const int MaxPerAddress = 12;
+
+        private readonly ConcurrentDictionary<IPAddress, int> _counts = new();
+
+        public bool TryAcquire(IPAddress address)
+        {
+            while (true)
+            {
+                var current = _counts.TryGetValue(address, out var existing) ? existing : 0;
+                if (current >= MaxPerAddress)
+                {
+                    return false;
+                }
+
+                if (current == 0)
+                {
+                    if (_counts.TryAdd(address, 1))
+                    {
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (_counts.TryUpdate(address, current + 1, current))
+                {
+                    return true;
+                }
+            }
+        }
+
+        public void Release(IPAddress address)
+        {
+            while (_counts.TryGetValue(address, out var current))
+            {
+                if (current <= 1)
+                {
+                    if (_counts.TryRemove(new KeyValuePair<IPAddress, int>(address, current)))
+                    {
+                        return;
+                    }
+                }
+                else if (_counts.TryUpdate(address, current - 1, current))
+                {
+                    return;
+                }
+            }
+        }
+    }
 
     private IPAddress GetAdvertisedAddress()
     {

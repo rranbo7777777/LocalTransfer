@@ -175,8 +175,10 @@ public sealed class OutboundQueuePersistenceTests : IDisposable
     [Fact]
     public void TransferRetry_MustStayWithinApprovalWait()
     {
+        // The backoff is exponential, so the bound has to come from the tuning helper rather than
+        // assuming a linear delay per attempt.
         var worstCase = TransferTuning.TransferPollInterval
-            + TransferTuning.TransferRetryBaseDelay * TransferTuning.TransferMaxAttempts;
+            + TransferTuning.TotalTransferRetryDelay;
         Assert.True(
             worstCase < TransferTuning.ClientApprovalWait,
             $"One failed request cycle ({worstCase}) must fit comfortably inside the approval " +

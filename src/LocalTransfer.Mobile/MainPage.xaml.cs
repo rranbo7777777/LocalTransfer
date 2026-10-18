@@ -12,6 +12,11 @@ public partial class MainPage : ContentPage
 	private CoordinatorConnection? _connection;
 	private LocalTransferClient? _client;
 	private bool _connectionLoadStarted;
+	private CancellationTokenSource? _transferCancellation;
+	private bool _discoveryRunning;
+
+	/// <summary>How long to listen for the desktop's broadcast before keeping the stored address.</summary>
+	private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(8);
 
 	public MainPage()
 	{
@@ -23,9 +28,19 @@ public partial class MainPage : ContentPage
 	{
 		base.OnAppearing();
 		ConsumeSharedFiles();
+
+		if (_connection is not null)
+		{
+			// Re-check the address whenever the page comes back: the user may have switched
+			// networks while the app was in the background, which is exactly when the stored
+			// endpoint goes stale.
+			_ = RefreshEndpointFromDiscoveryAsync(_connection);
+			return;
+		}
+
 		// OnAppearing fires again when modals close; without this guard a slow SecureStorage
 		// load can complete after a fresh pairing and overwrite the new connection with stale data.
-		if (_connection is not null || _connectionLoadStarted)
+		if (_connectionLoadStarted)
 		{
 			return;
 		}
@@ -37,6 +52,7 @@ public partial class MainPage : ContentPage
 			if (connection is not null && _connection is null)
 			{
 				SetConnection(connection);
+				_ = RefreshEndpointFromDiscoveryAsync(connection);
 			}
 		}
 		catch (Exception exception)
@@ -191,44 +207,234 @@ public partial class MainPage : ContentPage
 
 	private async void OnSendClicked(object sender, EventArgs e)
 	{
-		if (_client is null || _selectedFiles.Count == 0)
+		var client = _client;
+		if (client is null || _selectedFiles.Count == 0)
 		{
 			return;
 		}
 
+		using var cancellation = new CancellationTokenSource();
+		_transferCancellation = cancellation;
 		SetBusy(true, "正在准备文件…");
+
+		// Snapshot the selection: it is rebuilt below so anything that did not go through stays
+		// queued and can be retried with one more tap.
+		var batch = _selectedFiles.ToArray();
+		var staged = new List<(SharedSourceFile Source, StagedSourceFile Staged)>();
+		var failures = new List<SendFailure>();
+		var canceled = false;
+
 		try
 		{
-			foreach (var file in _selectedFiles)
+			// Every file has to be readable before one request can describe the whole batch, so
+			// staging happens up front - and a file that cannot be staged is reported on its own
+			// instead of taking the rest of the batch down with it.
+			for (var index = 0; index < batch.Length; index++)
 			{
-				var progress = new Progress<TransferProgress>(value => ReportProgress("正在发送", value));
-				await _client.UploadAsync(
-					file.FileName,
-					file.OpenReadAsync,
-					progress: progress);
+				var file = batch[index];
+				if (cancellation.IsCancellationRequested)
+				{
+					canceled = true;
+					break;
+				}
+
+				TransferStatusLabel.Text = batch.Length > 1
+					? $"正在准备 {file.FileName}（{index + 1}/{batch.Length}）"
+					: $"正在准备 {file.FileName}";
+				try
+				{
+					staged.Add((file, await UploadStaging.PrepareAsync(file, cancellation.Token)));
+				}
+				catch (OperationCanceledException)
+				{
+					canceled = true;
+					break;
+				}
+				catch (Exception exception)
+				{
+					MobileDiagnostics.Log("send-prepare", exception);
+					failures.Add(new SendFailure(file, DescribeSendFailure(exception)));
+				}
 			}
 
-			_selectedFiles.Clear();
-			SelectedFilesView.ItemsSource = null;
-			SelectedFilesView.IsVisible = false;
-			EmptySelectionLabel.IsVisible = true;
-			SelectedFilesSummary.Text = "0 个文件";
-			await DisplayAlert("发送完成", "所有文件均已通过 SHA-256 校验并保存到电脑。", "确定");
+			if (staged.Count > 0 && !canceled)
+			{
+				// One request, one prompt on the desktop - instead of one prompt per file.
+				TransferStatusLabel.Text = $"等待电脑确认 {staged.Count} 个文件…";
+				var items = staged
+					.Select(entry => new BatchUploadItem(
+						entry.Source.FileName,
+						entry.Staged.OpenReadAsync,
+						Sha256Hex: entry.Staged.Sha256Hex,
+						Length: entry.Staged.Length))
+					.ToArray();
+				var progress = new Progress<TransferProgress>(value => ReportProgress("正在发送", value));
+
+				var result = await Task.Run(
+					() => client.UploadBatchAsync(items, progress, cancellation.Token),
+					cancellation.Token);
+
+				var completed = new HashSet<int>(result.CompletedIndexes);
+				foreach (var failure in result.Failed)
+				{
+					failures.Add(new SendFailure(staged[failure.Index].Source, failure.Reason));
+				}
+
+				foreach (var index in result.RejectedIndexes)
+				{
+					failures.Add(new SendFailure(staged[index].Source, "电脑没有接收这个文件。"));
+				}
+
+				var remaining = new List<SharedSourceFile>();
+				for (var index = 0; index < staged.Count; index++)
+				{
+					if (!completed.Contains(index))
+					{
+						remaining.Add(staged[index].Source);
+					}
+				}
+
+				foreach (var failure in failures)
+				{
+					if (!remaining.Contains(failure.File))
+					{
+						remaining.Add(failure.File);
+					}
+				}
+
+				SetSelectedFiles(remaining, replace: true);
+				await ShowSendOutcomeAsync(completed.Count, failures, canceled);
+				return;
+			}
+
+			// Nothing could be staged, or the user cancelled during staging: keep whatever still
+			// needs attention and report why.
+			var pending = batch
+				.Where(file => failures.All(failure => !ReferenceEquals(failure.File, file)))
+				.ToList();
+			SetSelectedFiles(pending, replace: true);
+			await ShowSendOutcomeAsync(0, failures, canceled);
 		}
 		catch (CoordinatorCredentialException exception)
 		{
 			MobileDiagnostics.Log("send", exception);
+			SetSelectedFiles(batch, replace: true);
 			await HandleCredentialRejectedAsync();
+		}
+		catch (OperationCanceledException)
+		{
+			canceled = true;
+			SetSelectedFiles(batch, replace: true);
+			await ShowSendOutcomeAsync(0, failures, canceled);
 		}
 		catch (Exception exception)
 		{
 			MobileDiagnostics.Log("send", exception);
+			SetSelectedFiles(batch, replace: true);
 			await DisplayAlert("发送失败", DescribeSendFailure(exception), "确定");
 		}
 		finally
 		{
+			foreach (var entry in staged)
+			{
+				entry.Staged.Dispose();
+			}
+
+			_transferCancellation = null;
 			SetBusy(false, string.Empty);
 		}
+	}
+
+	private void OnCancelTransferClicked(object sender, EventArgs e)
+	{
+		var cancellation = _transferCancellation;
+		if (cancellation is null || cancellation.IsCancellationRequested)
+		{
+			return;
+		}
+
+		// Disable first: cancellation is cooperative, and the chunk already in flight still has to
+		// unwind before the loop actually stops.
+		CancelTransferButton.IsEnabled = false;
+		TransferStatusLabel.Text = "正在取消…";
+		cancellation.Cancel();
+	}
+
+	/// <summary>
+	/// Hands the diagnostics log to the system share sheet. The app-private directory is
+	/// unreachable over USB, so sharing it is the only way the user can get the file off the phone.
+	/// </summary>
+	private async void OnShareLogClicked(object sender, EventArgs e)
+	{
+		var logPath = MobileDiagnostics.TryGetLogPath();
+		if (logPath is null || !File.Exists(logPath))
+		{
+			await DisplayAlert("暂无日志", "还没有记录到诊断信息。发生传输失败后再试一次。", "确定");
+			return;
+		}
+
+		try
+		{
+			await Share.Default.RequestAsync(new ShareFileRequest
+			{
+				Title = "导出局域传输诊断日志",
+				File = new ShareFile(logPath)
+			});
+		}
+		catch (Exception exception)
+		{
+			MobileDiagnostics.Log("share-log", exception);
+			await DisplayAlert("无法导出日志", exception.Message, "确定");
+		}
+	}
+
+	/// <summary>
+	/// Reports the batch outcome file by file instead of one generic "发送失败". Once failures are
+	/// isolated per file, the user needs to know which ones still need attention.
+	/// </summary>
+	private async Task ShowSendOutcomeAsync(int succeeded, List<SendFailure> failures, bool canceled)
+	{
+		if (failures.Count == 0 && !canceled)
+		{
+			await DisplayAlert(
+				"发送完成",
+				$"{succeeded} 个文件均已通过 SHA-256 校验并保存到电脑。",
+				"确定");
+			return;
+		}
+
+		var lines = new List<string>();
+		if (succeeded > 0)
+		{
+			lines.Add($"已成功发送 {succeeded} 个。");
+		}
+
+		if (canceled)
+		{
+			lines.Add("已取消，剩余文件未发送。");
+		}
+
+		if (failures.Count > 0)
+		{
+			lines.Add($"失败 {failures.Count} 个：");
+			foreach (var failure in failures.Take(3))
+			{
+				lines.Add($"· {failure.File.FileName}");
+				lines.Add($"　{failure.Reason}");
+			}
+
+			if (failures.Count > 3)
+			{
+				lines.Add($"……另有 {failures.Count - 3} 个未成功。");
+			}
+
+			lines.Add("未成功的文件已保留在列表中，可直接再点「发送」重试。");
+		}
+
+		await DisplayAlert(
+			failures.Count > 0 ? "部分文件未发送" : "已取消发送",
+			string.Join("\n", lines),
+			"确定");
 	}
 
 	private void OnSharedFilesAvailable(object? sender, EventArgs e)
@@ -297,7 +503,13 @@ public partial class MainPage : ContentPage
 				}
 
 				var progress = new Progress<TransferProgress>(value => ReportProgress("正在接收", value));
-				var finalPath = await _client.DownloadAsync(transfer, destination, progress);
+				var client = _client!;
+
+				// Run the download on a pool thread. In MAUI an await inside a UI-thread call comes
+				// back to the UI thread, and disposing an HttpClient response there makes Android
+				// discard the unread body over the network - which StrictMode rejects with
+				// NetworkOnMainThreadException.
+				var finalPath = await Task.Run(() => client.DownloadAsync(transfer, destination, progress));
 				var share = await DisplayAlert(
 					"接收完成",
 					$"{transfer.Manifest.FileName} 已完成校验。是否打开系统分享/保存菜单？",
@@ -333,7 +545,11 @@ public partial class MainPage : ContentPage
 	{
 		_client?.Dispose();
 		_connection = connection;
-		_client = new LocalTransferClient(connection);
+		// The sink lives on the client, not on the record: the record is persisted to secure
+		// storage, and a delegate cannot survive that round trip.
+		_client = new LocalTransferClient(
+			connection,
+			message => MobileDiagnostics.Log("transfer", message));
 
 		ShowConnectedStatus();
 		ComputerNameLabel.Text = new Uri(connection.Endpoint).Host;
@@ -348,6 +564,68 @@ public partial class MainPage : ContentPage
 		UnbindButton.IsVisible = true;
 		UpdateActions();
 	}
+
+	/// <summary>
+	/// Looks for the paired computer on the local network and adopts its current address.
+	/// <para>
+	/// The stored endpoint is only replaced once a broadcast proves it comes from the same machine,
+	/// by matching the certificate fingerprint pinned at pairing time. That makes a stale address
+	/// (a new DHCP lease, a different Wi-Fi) heal itself without the user rescanning anything, while
+	/// a stranger advertising on the group can never redirect this phone.
+	/// </para>
+	/// </summary>
+	private async Task RefreshEndpointFromDiscoveryAsync(CoordinatorConnection connection)
+	{
+		if (_discoveryRunning || _transferCancellation is not null)
+		{
+			return;
+		}
+
+		_discoveryRunning = true;
+		try
+		{
+			using var discovery = new MulticastDiscovery();
+			discovery.Start();
+			var endpoint = await discovery.FindAsync(
+				connection.CertificateSha256,
+				DiscoveryTimeout,
+				CancellationToken.None);
+			if (endpoint is null ||
+				string.Equals(endpoint, connection.Endpoint, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			await MainThread.InvokeOnMainThreadAsync(async () =>
+			{
+				// Never swap the endpoint out from under a transfer that is already running.
+				if (_connection is null || _transferCancellation is not null)
+				{
+					return;
+				}
+
+				var updated = connection with { Endpoint = endpoint };
+				await MobileConnectionStore.SaveAsync(updated);
+				SetConnection(updated);
+				ComputerDetailLabel.Text =
+					$"{new Uri(endpoint).Host} · 已自动发现 · 证书 " +
+					$"{ShortFingerprint(updated.CertificateSha256)}…";
+			});
+		}
+		catch (Exception exception)
+		{
+			// Discovery is an optimisation: when it fails the stored endpoint is still used and the
+			// QR code remains available, so it never surfaces as an error to the user.
+			MobileDiagnostics.Log("discovery", exception);
+		}
+		finally
+		{
+			_discoveryRunning = false;
+		}
+	}
+
+	private static string ShortFingerprint(string fingerprint) =>
+		fingerprint.Length > 12 ? fingerprint[..12] : fingerprint;
 
 	// ---------------------------------------------------------------- 连接状态外观
 
@@ -454,6 +732,8 @@ public partial class MainPage : ContentPage
 		TransferStatusLabel.Text = status;
 		PairButton.IsEnabled = !isBusy;
 		UnbindButton.IsEnabled = !isBusy;
+		CancelTransferButton.IsVisible = isBusy;
+		CancelTransferButton.IsEnabled = isBusy;
 
 		if (isBusy)
 		{
@@ -541,4 +821,7 @@ public partial class MainPage : ContentPage
 }
 
 public sealed record SelectedFileItem(string FileName, string ContentType, string SizeText);
+
+/// <summary>A file that did not make it, paired with a message the user can act on.</summary>
+public sealed record SendFailure(SharedSourceFile File, string Reason);
 

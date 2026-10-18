@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Transfers;
+using LocalTransfer.Coordinator.History;
 using LocalTransfer.Core.Transfers;
 
 namespace LocalTransfer.Coordinator.Transfers;
@@ -29,9 +30,13 @@ public sealed class OutboundTransferCoordinator : IDisposable
 
     private readonly object _persistGate = new();
     private readonly string? _queueFilePath;
+    private readonly TransferHistoryStore? _history;
 
-    public OutboundTransferCoordinator(string? dataDirectory = null)
+    public OutboundTransferCoordinator(
+        string? dataDirectory = null,
+        TransferHistoryStore? history = null)
     {
+        _history = history;
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
             return;
@@ -112,7 +117,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
             sha256Hex);
         manifest.Validate();
 
-        var transfer = new OutboundTransfer(deviceId, fullPath, manifest);
+        var transfer = CreateTransfer(deviceId, fullPath, manifest);
         if (!_transfers.TryAdd(manifest.TransferId, transfer))
         {
             transfer.Gate.Dispose();
@@ -300,6 +305,50 @@ public sealed class OutboundTransferCoordinator : IDisposable
         }
     }
 
+    private OutboundTransfer CreateTransfer(Guid deviceId, string sourcePath, FileManifest manifest)
+    {
+        var transfer = new OutboundTransfer(deviceId, sourcePath, manifest);
+
+        // Same approach as the inbound side: record on the terminal transition so no ending path
+        // (completed, cancelled, failed) can be added later without also being recorded.
+        transfer.StateMachine.StateChanged += (_, state) =>
+        {
+            if (ToOutcome(state) is { } outcome)
+            {
+                RecordTerminal(transfer, outcome);
+            }
+        };
+
+        return transfer;
+    }
+
+    private static TransferOutcome? ToOutcome(TransferState state) => state switch
+    {
+        TransferState.Completed => TransferOutcome.Completed,
+        TransferState.Failed => TransferOutcome.Failed,
+        TransferState.Rejected => TransferOutcome.Rejected,
+        TransferState.Canceled => TransferOutcome.Canceled,
+        _ => null
+    };
+
+    private void RecordTerminal(OutboundTransfer transfer, TransferOutcome outcome)
+    {
+        if (_history is null || Interlocked.Exchange(ref transfer.HistoryRecorded, 1) != 0)
+        {
+            return;
+        }
+
+        _history.Append(new TransferHistoryEntry(
+            transfer.Manifest.TransferId,
+            transfer.DeviceId,
+            TransferDirection.Outbound,
+            transfer.Manifest.FileName,
+            transfer.Manifest.Length,
+            DateTimeOffset.UtcNow,
+            outcome,
+            transfer.Error));
+    }
+
     private OutboundTransfer GetOwnedTransfer(Guid transferId, Guid deviceId)
     {
         if (!_transfers.TryGetValue(transferId, out var transfer) || transfer.DeviceId != deviceId)
@@ -443,7 +492,7 @@ public sealed class OutboundTransferCoordinator : IDisposable
                 continue;
             }
 
-            var transfer = new OutboundTransfer(entry.DeviceId, entry.SourcePath, entry.Manifest);
+            var transfer = CreateTransfer(entry.DeviceId, entry.SourcePath, entry.Manifest);
             if (_transfers.TryAdd(entry.TransferId, transfer))
             {
                 transfer.Restored = true;
@@ -460,6 +509,9 @@ public sealed class OutboundTransferCoordinator : IDisposable
     private sealed class OutboundTransfer(Guid deviceId, string sourcePath, FileManifest manifest)
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
+
+        /// <summary>Guards against recording the same transfer in the history twice.</summary>
+        public int HistoryRecorded;
 
         public Guid DeviceId { get; } = deviceId;
 

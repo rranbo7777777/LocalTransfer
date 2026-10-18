@@ -4,6 +4,9 @@
 	     the device through adb backup or cloud backup onto another handset. -->
 	<application android:allowBackup="false" android:icon="@mipmap/appicon" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true"></application>
 	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+	<!-- Discovery: Android only delivers UDP multicast to an app holding a MulticastLock, and
+	     acquiring that lock requires this normal permission (no runtime prompt). -->
+	<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 	<uses-permission android:name="android.permission.CAMERA" />
 	<uses-permission android:name="android.permission.INTERNET" />
 </manifest>

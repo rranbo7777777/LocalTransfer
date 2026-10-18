@@ -13,6 +13,7 @@ using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Contracts.Transfers;
 using LocalTransfer.Coordinator;
 using LocalTransfer.Coordinator.Devices;
+using LocalTransfer.Coordinator.History;
 using LocalTransfer.Coordinator.Pairing;
 using LocalTransfer.Coordinator.Transfers;
 using Microsoft.Win32;
@@ -42,6 +43,7 @@ public partial class MainWindow : Window
         DataContext = this;
         _coordinator.Pairing.PairingRequested += OnPairingRequested;
         _coordinator.InboundTransfers.TransferOffered += OnTransferOffered;
+        _coordinator.InboundTransfers.BatchOffered += OnBatchOffered;
         Closed += OnWindowClosed;
 
         // The queue and the inbound state both move while the user watches this page, so poll
@@ -67,7 +69,7 @@ public partial class MainWindow : Window
 
     public ObservableCollection<TransferRow> InboundRows { get; } = [];
 
-    public ObservableCollection<ReceivedFileRow> ReceivedRows { get; } = [];
+    public ObservableCollection<HistoryRow> HistoryRows { get; } = [];
 
     // ---------------------------------------------------------------- 导航
 
@@ -105,17 +107,21 @@ public partial class MainWindow : Window
                 "已配对、可直接互传的设备。移除后该设备需要重新扫码配对。"),
             AppPage.Transfers => (
                 "传输任务",
-                "进行中的传输。发送队列只保存在内存里，退出程序后需要重新排队。"),
+                "进行中的传输。发送队列会保存到本地，重启程序后仍留在队列里的文件会自动恢复。"),
             AppPage.History => (
                 "历史记录",
-                $"电脑已经收到的文件，保存在 {_coordinator.ReceiveDirectory}。"),
+                "手机与电脑之间收发过的文件，两个方向都记录。"),
             AppPage.Settings => (
                 "设置",
                 "服务地址、目录与证书信息（当前为只读）。"),
+
+            // Send is the default page: two sentences, split at the sentence boundary so the wrap
+            // lands where it reads, instead of orphaning the last few characters on a second line.
             _ => (
                 "发送文件",
-                "电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。" +
-                "手机 → 电脑：在手机上发送后，这里会弹窗让你确认。")
+                "电脑 → 手机：选好设备与文件后点「发送」，再在手机上点「接收电脑文件」。"
+                + Environment.NewLine
+                + "手机 → 电脑：在手机上发送后，这里会弹窗让你确认。")
         };
 
         HighlightNav(page);
@@ -525,53 +531,68 @@ public partial class MainWindow : Window
 
     private void RefreshHistoryRows()
     {
-        ReceivedRows.Clear();
-        string? error = null;
-        try
-        {
-            var directory = _coordinator.ReceiveDirectory;
-            if (Directory.Exists(directory))
-            {
-                // Finished files only: the receiver keeps ".part" payloads and checkpoint JSON in
-                // a ".localtransfer" subdirectory, and this listing does not recurse.
-                var entries = new List<ReceivedFileRow>();
-                foreach (var path in Directory.EnumerateFiles(directory))
-                {
-                    try
-                    {
-                        var file = new FileInfo(path);
-                        entries.Add(new ReceivedFileRow(
-                            file.Name,
-                            FormatSize(file.Length),
-                            file.LastWriteTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
-                            file.FullName));
-                    }
-                    catch (Exception)
-                    {
-                        // A file that disappeared between listing and inspection is skipped.
-                    }
-                }
+        HistoryRows.Clear();
 
-                entries.Sort((left, right) => string.CompareOrdinal(right.TimeText, left.TimeText));
-                foreach (var entry in entries)
-                {
-                    ReceivedRows.Add(entry);
-                }
-            }
-        }
-        catch (Exception exception)
+        // Both directions come from the same append-only log now. A send the phone downloaded is as
+        // visible here as a receive, and a file the user later moved or renamed no longer vanishes
+        // from the history the way a directory scan used to lose it.
+        foreach (var entry in _coordinator.History.Read())
         {
-            // Reading history must never take the window down.
-            error = exception.Message;
+            HistoryRows.Add(new HistoryRow(
+                entry.FileName,
+                DescribeHistoryEntry(entry),
+                FormatSize(entry.Length),
+                DescribeOutcome(entry.Outcome),
+                ResolveOutcomeSurface(entry.Outcome),
+                ResolveOutcomeForeground(entry.Outcome),
+                string.IsNullOrWhiteSpace(entry.Error) ? null : entry.Error));
         }
 
-        EmptyHistoryText.Text = error is null
-            ? "还没有收到过文件。手机向电脑发送后，会把文件保存到接收目录。"
-            : $"无法读取接收目录：{error}";
-        EmptyHistoryText.Visibility = ReceivedRows.Count == 0
+        EmptyHistoryText.Text = "还没有传输记录。手机与电脑之间收发的每个文件都会记在这里。";
+        EmptyHistoryText.Visibility = HistoryRows.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
     }
+
+    /// <summary>
+    /// Direction, counterpart and time on one line. The outcome is a badge on the right rather than
+    /// a word buried in this string, and the error text becomes the row's tooltip: that is the
+    /// detail you want on hover, not a fourth thing competing for the same line.
+    /// </summary>
+    private string DescribeHistoryEntry(TransferHistoryEntry entry)
+    {
+        var device = TrustedDevices.FirstOrDefault(item => item.DeviceId == entry.DeviceId);
+        var who = device?.DisplayName ?? entry.DeviceId.ToString()[..8];
+        var direction = entry.Direction == TransferDirection.Inbound ? "手机 → 电脑" : "电脑 → 手机";
+        return $"{direction} · {who} · {entry.AtUtc.ToLocalTime():MM-dd HH:mm}";
+    }
+
+    private static string DescribeOutcome(TransferOutcome outcome) => outcome switch
+    {
+        TransferOutcome.Completed => "已完成",
+        TransferOutcome.Failed => "失败",
+        TransferOutcome.Rejected => "未接收",
+        TransferOutcome.Canceled => "已取消",
+        _ => outcome.ToString()
+    };
+
+    // Matches the colour language used by the transfer rows and by the phone, so a finished
+    // transfer reads the same wherever it is shown.
+    private static Brush ResolveOutcomeSurface(TransferOutcome outcome) => outcome switch
+    {
+        TransferOutcome.Completed => new SolidColorBrush(Color.FromRgb(0xE4, 0xF6, 0xEC)),
+        TransferOutcome.Failed => new SolidColorBrush(Color.FromRgb(0xFC, 0xEB, 0xEB)),
+        TransferOutcome.Rejected => new SolidColorBrush(Color.FromRgb(0xFF, 0xF5, 0xDC)),
+        _ => new SolidColorBrush(Color.FromRgb(0xEE, 0xF1, 0xF7))
+    };
+
+    private static Brush ResolveOutcomeForeground(TransferOutcome outcome) => outcome switch
+    {
+        TransferOutcome.Completed => new SolidColorBrush(Color.FromRgb(0x0F, 0x6B, 0x40)),
+        TransferOutcome.Failed => new SolidColorBrush(Color.FromRgb(0xA3, 0x2D, 0x2D)),
+        TransferOutcome.Rejected => new SolidColorBrush(Color.FromRgb(0x8A, 0x61, 0x0E)),
+        _ => new SolidColorBrush(Color.FromRgb(0x69, 0x75, 0x8C))
+    };
 
     // ---------------------------------------------------------------- 设置
 
@@ -581,6 +602,7 @@ public partial class MainWindow : Window
         SettingPortText.Text = _coordinator.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         SettingReceiveDirText.Text = _coordinator.ReceiveDirectory;
         SettingDataDirText.Text = _coordinator.DataDirectory;
+        SettingLogDirText.Text = Path.Combine(_coordinator.DataDirectory, "logs");
         SettingCertText.Text = _coordinator.CertificateSha256 ?? "（协调服务未启动）";
         SettingProtocolText.Text = "1（协议版本 1）";
     }
@@ -590,6 +612,9 @@ public partial class MainWindow : Window
 
     private void OnOpenDataFolderClicked(object sender, RoutedEventArgs e) =>
         OpenFolder(_coordinator.DataDirectory);
+
+    private void OnOpenLogFolderClicked(object sender, RoutedEventArgs e) =>
+        OpenFolder(Path.Combine(_coordinator.DataDirectory, "logs"));
 
     private static void OpenFolder(string path)
     {
@@ -732,6 +757,68 @@ public partial class MainWindow : Window
         _transfersRefreshTimer.Stop();
         _coordinator.Pairing.PairingRequested -= OnPairingRequested;
         _coordinator.InboundTransfers.TransferOffered -= OnTransferOffered;
+        _coordinator.InboundTransfers.BatchOffered -= OnBatchOffered;
+    }
+
+    private void OnBatchOffered(object? sender, InboundBatchInfo batch)
+    {
+        DispatchSafe(() => HandleBatchOfferAsync(batch));
+    }
+
+    /// <summary>
+    /// Answers a batch in one dialog instead of one message box per file. Declining is still
+    /// per-file: unchecking a row rejects exactly that file and accepts the rest.
+    /// </summary>
+    private async Task HandleBatchOfferAsync(InboundBatchInfo batch)
+    {
+        var device = TrustedDevices.FirstOrDefault(item => item.DeviceId == batch.DeviceId);
+        var deadline = batch.ExpiresAtUtc == default
+            ? DateTimeOffset.UtcNow + TransferTuning.ClientApprovalWait
+            : batch.ExpiresAtUtc;
+
+        var dialog = new BatchApprovalWindow(
+            batch,
+            device?.DisplayName ?? batch.DeviceId.ToString(),
+            deadline)
+        {
+            Owner = this
+        };
+
+        var confirmed = dialog.ShowDialog() == true;
+
+        if (dialog.TimedOut)
+        {
+            await _coordinator.InboundTransfers.RejectBatchAsync(batch.BatchId, batch.DeviceId);
+            MessageBox.Show(
+                "没有来得及确认：手机已经停止等待了。\n\n" +
+                "在手机上重新点「发送」即可再来一次。",
+                "接收请求已失效",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!confirmed)
+        {
+            await _coordinator.InboundTransfers.RejectBatchAsync(batch.BatchId, batch.DeviceId);
+            return;
+        }
+
+        try
+        {
+            await _coordinator.InboundTransfers.ApproveBatchAsync(
+                batch.BatchId,
+                batch.DeviceId,
+                dialog.AcceptedTransferIds);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"无法准备接收文件：{exception.Message}",
+                "文件接收失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private void OnTransferOffered(object? sender, InboundTransferInfo transfer)
@@ -835,8 +922,11 @@ public sealed record TransferRow(
     Brush StateForeground,
     string SizeText);
 
-public sealed record ReceivedFileRow(
+public sealed record HistoryRow(
     string FileName,
+    string DetailText,
     string SizeText,
-    string TimeText,
-    string FullPath);
+    string StateText,
+    Brush StateSurface,
+    Brush StateForeground,
+    string? ErrorText);
