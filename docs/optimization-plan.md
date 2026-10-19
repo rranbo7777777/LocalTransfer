@@ -1,8 +1,13 @@
 # LocalTransfer 优化方案（对照 LocalSend 最新实现）
 
-> 生成时间：2026-10-16
+> 生成时间：2026-10-16　最后更新：2026-10-19
 > 参照版本：`localsend/localsend` @ `d01fdb1`（2026-10-15，Apache-2.0）
-> 参照代码位置：`D:\自我提升\AI实现\传输工具\_refs\localsend-tmp`（设计参照，未复制任何代码）
+> 参照代码位置：项目外的临时克隆（**仅作设计对照，未复制任何代码**；设计要点已吸收进本文档，
+> 本地克隆已于 2026-10-19 清理，需要时重新 clone 即可）
+>
+> **状态：已实施完毕。** 三批改造（续传闭环 / 自动发现 + 整批批准 / 双向历史 + 限流）全部落地并验证，
+> 65 个测试通过。本文档因此转为**实施记录**保留；后续计划见 [实施路线](roadmap.md)，
+> 协议细节见 [协议说明](protocol-v1.md)。
 
 ---
 
@@ -344,8 +349,8 @@ LocalSend 的组播端口是 53317。**一台 Android 手机上的两个 App 不
   - **批量端到端用例**：真实 HTTPS 下 3 个文件只触发 **1 次**确认、全部落地、历史记 3 条完成
 - **组播实测**：本机启动 announcer 并加入组播组监听，实际收到 183 字节公告，内容为
   `{"service":"LocalTransfer","protocolVersion":1,"alias":"CHECK","fingerprint":"AAAA…","endpoint":"https://192.168.1.5:53317"}`。
-- 产物：`src/LocalTransfer.Mobile/bin/Debug/net8.0-android/com.localtransfer.mobile-Signed.apk`
-  （21:05 重打，`libxamarin-app.so` 时间戳已核对）。
+- 产物：`dist/win-x64/`（Release 自包含）与 `dist/局域传输-1.0-arm64.apk`（Release + AOT，含 `.idsig`）。
+  调试期的中间 APK（`bin/**/*.apk`）已在 2026-10-19 的清理中删除，需要时重新编译。
 
 ### 仍可做的事（都不影响当前使用）
 
