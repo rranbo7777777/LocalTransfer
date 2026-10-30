@@ -73,15 +73,70 @@ public sealed class TrustedDeviceStore
         try
         {
             var actualHash = SHA256.HashData(Encoding.UTF8.GetBytes(credential));
-            return CryptographicOperations.FixedTimeEquals(
+            var matches = CryptographicOperations.FixedTimeEquals(
                 actualHash,
                 Convert.FromHexString(device.CredentialHashHex));
+            if (matches)
+            {
+                TouchLastSeen(deviceId);
+            }
+
+            return matches;
         }
         catch (FormatException)
         {
             // A corrupted store entry must fail closed instead of surfacing as a server error.
             return false;
         }
+    }
+
+    /// <summary>
+    /// Records that a paired device just authenticated successfully, so the desktop's 设备 page
+    /// can show real recent activity instead of “尚未连接过” forever. Persisting is throttled to
+    /// one write per device per minute: health polls during a transfer would otherwise rewrite
+    /// the store on every request. The write is best effort — losing a last-seen timestamp must
+    /// never fail the request that triggered it.
+    /// </summary>
+    private void TouchLastSeen(Guid deviceId)
+    {
+        StoredTrustedDevice[] snapshot;
+        lock (_gate)
+        {
+            if (!_devices.TryGetValue(deviceId, out var device))
+            {
+                return;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            if (device.LastSeenUtc is { } seen && now - seen < TimeSpan.FromMinutes(1))
+            {
+                return;
+            }
+
+            _devices[deviceId] = device with { LastSeenUtc = now };
+            snapshot = _devices.Values.ToArray();
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _writeGate.WaitAsync();
+                try
+                {
+                    await SaveAsync(snapshot, CancellationToken.None);
+                }
+                finally
+                {
+                    _writeGate.Release();
+                }
+            }
+            catch
+            {
+                // Best effort only: the in-memory value is already updated, and the next
+                // successful authentication after the throttle window will retry the save.
+            }
+        });
     }
 
     public async Task AddOrUpdateAsync(

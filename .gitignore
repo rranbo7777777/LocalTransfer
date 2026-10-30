@@ -493,3 +493,7 @@ $RECYCLE.BIN/
 # Android/Java keystores must never be committed, even outside /signing/.
 *.keystore
 *.jks
+
+# 本地自检产物与代理运行状态，不属于源码
+/自检截图/
+/.zwork/

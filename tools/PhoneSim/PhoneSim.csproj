@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>PhoneSim</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LocalTransfer.Client\LocalTransfer.Client.csproj" />
+    <ProjectReference Include="..\..\src\LocalTransfer.Contracts\LocalTransfer.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
