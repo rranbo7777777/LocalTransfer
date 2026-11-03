@@ -1,4 +1,4 @@
-﻿using LocalTransfer.Contracts.Devices;
+using LocalTransfer.Contracts.Devices;
 using LocalTransfer.Contracts.Protocol;
 using LocalTransfer.Coordinator.Devices;
 
@@ -87,7 +87,7 @@ public sealed class TrustedDeviceStoreTests
         {
             if (Directory.Exists(Path))
             {
-                Directory.Delete(Path, recursive: true);
+                TestCleanup.DeleteDirectory(Path);
             }
         }
     }

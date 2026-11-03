@@ -113,7 +113,7 @@ public sealed class BatchApprovalTests : IDisposable
     {
         try
         {
-            Directory.Delete(_receiveDirectory, recursive: true);
+            TestCleanup.DeleteDirectory(_receiveDirectory);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {

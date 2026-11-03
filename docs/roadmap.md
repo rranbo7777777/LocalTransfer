@@ -1,6 +1,6 @@
 # 实施路线
 
-> 更新于 2026-10-19。已完成项保留在此作为验收清单，未完成项按优先级排列。
+> 更新于 2026-11-03。已完成项保留在此作为验收清单，未完成项按优先级排列。
 
 ## 已完成
 
@@ -37,6 +37,14 @@
 - 真机日志驱动的两处修复：`UploadStaging` 一律复制到缓存（`content://` 不能被重复打开）；
   传输流程整体包进 `Task.Run`，避免 `await` 回到 UI 线程后 `HttpResponseMessage.Dispose()` 触发
   `NetworkOnMainThreadException`。
+
+### 阶段 4：自检与联调基建（2026-10-30）
+
+- **应用图标**：两端同源设计（蓝底渐变 + 手机/笔记本双向箭头）——Windows 多尺寸 `App.ico`（exe 内嵌/标题栏/托盘）与 Android 自适应图标（`appicon.svg` + `appiconfg.svg`，前景缩进适配圆形蒙版安全区）；生成脚本 `tools/icon-source/make_icon.py`。
+- **修复设备页「最近活动」**：`TrustedDeviceStore.LastSeenUtc` 此前只有定义、全工程无写入；现由凭据校验成功后节流落盘（1 分钟/次），附 2 个回归测试。
+- **PhoneSim 联调工具**（`tools/PhoneSim`）：与手机端共用 `LocalTransfer.Client`，无真机时在真实 HTTPS 上模拟配对/上传/下载全流程。
+- **UIA 自检库**（`tools/ui-check/lib.ps1`）与界面自检报告：见 [自检报告 2026-10-30](自检报告-2026-10-30-界面与安卓互通.md)。
+- **（2026-11-03）修复集成测试偶发失败**：静态日志器与临时目录清理之间存在句柄竞争，`Directory.Delete` 偶发抛 IOException；新增带退避重试的 `TestCleanup.DeleteDirectory` 统一替换 9 个测试类的裸删除。
 
 ## 下一步：真机联调与可靠性验收
 

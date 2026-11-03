@@ -177,7 +177,7 @@ public sealed class MobileClientTests
         {
             if (Directory.Exists(Path))
             {
-                Directory.Delete(Path, recursive: true);
+                TestCleanup.DeleteDirectory(Path);
             }
         }
     }

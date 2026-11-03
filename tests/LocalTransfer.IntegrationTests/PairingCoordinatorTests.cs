@@ -97,7 +97,7 @@ public sealed class PairingCoordinatorTests
         {
             if (Directory.Exists(Path))
             {
-                Directory.Delete(Path, recursive: true);
+                TestCleanup.DeleteDirectory(Path);
             }
         }
     }

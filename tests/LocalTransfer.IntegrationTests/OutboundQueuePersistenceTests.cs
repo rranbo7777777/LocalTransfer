@@ -27,8 +27,8 @@ public sealed class OutboundQueuePersistenceTests : IDisposable
 
     public void Dispose()
     {
-        Directory.Delete(_dataDirectory, recursive: true);
-        Directory.Delete(_sourcesDirectory, recursive: true);
+        TestCleanup.DeleteDirectory(_dataDirectory);
+        TestCleanup.DeleteDirectory(_sourcesDirectory);
     }
 
     private string CreateSourceFile(string name, int length)

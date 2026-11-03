@@ -112,7 +112,7 @@ public sealed class TransferHistoryTests : IDisposable
     {
         try
         {
-            Directory.Delete(_directory, recursive: true);
+            TestCleanup.DeleteDirectory(_directory);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
