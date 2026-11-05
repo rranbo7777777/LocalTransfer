@@ -6,6 +6,10 @@
 	<string>用于在同一 Wi-Fi 或手机热点内与已配对电脑直接传输文件。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>用于扫描电脑显示的一次性安全配对二维码。</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIDeviceFamily</key>

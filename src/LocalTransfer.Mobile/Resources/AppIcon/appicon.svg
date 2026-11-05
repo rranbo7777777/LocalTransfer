@@ -1,4 +1,26 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- 局域传输完整图标：渐变底 + 前景图形（与 appiconfg.svg 同一几何，源头在 make_icon.py）。 -->
 <svg width="456" height="456" viewBox="0 0 456 456" version="1.1" xmlns="http://www.w3.org/2000/svg">
-    <rect x="0" y="0" width="456" height="456" fill="#376BEA" />
+    <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#4A86FF" />
+            <stop offset="1" stop-color="#2450D6" />
+        </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="456" height="456" fill="url(#bg)" />
+    <g transform="translate(228,228) scale(0.865) translate(-251.5,-222.6)"
+       fill="none" stroke="#ffffff" stroke-width="17">
+        <!-- 手机（左，竖屏轮廓） -->
+        <rect x="75.7" y="133.6" width="93.5" height="213.7" rx="22.2" />
+        <!-- 笔记本屏幕（右，轮廓） -->
+        <rect x="276" y="146.9" width="133.6" height="138.1" rx="16" />
+        <!-- 笔记本底座（填充） -->
+        <rect x="258.2" y="293.9" width="169.1" height="17.8" rx="8.9" fill="#ffffff" stroke="none" />
+        <!-- 上箭头：向右（手机 → 电脑） -->
+        <rect x="182.5" y="195.9" width="69.1" height="14.2" rx="7.1" fill="#ffffff" stroke="none" />
+        <polygon points="251.6,182.5 251.6,223.5 282.8,203" fill="#ffffff" stroke="none" />
+        <!-- 下箭头：向左（电脑 → 手机） -->
+        <rect x="202.5" y="245.8" width="69.1" height="14.2" rx="7.1" fill="#ffffff" stroke="none" />
+        <polygon points="202.5,243.1 202.5,284.1 171.4,263.6" fill="#ffffff" stroke="none" />
+    </g>
 </svg>

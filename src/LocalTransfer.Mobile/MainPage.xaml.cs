@@ -1,4 +1,7 @@
-﻿using System.Text.Json;
+using System.Text.Json;
+#if IOS
+using UIKit;
+#endif
 using LocalTransfer.Client;
 using LocalTransfer.Contracts.Devices;
 using LocalTransfer.Contracts.Pairing;
@@ -13,7 +16,9 @@ public partial class MainPage : ContentPage
 	private LocalTransferClient? _client;
 	private bool _connectionLoadStarted;
 	private CancellationTokenSource? _transferCancellation;
+#if !IOS
 	private bool _discoveryRunning;
+#endif
 
 	/// <summary>How long to listen for the desktop's broadcast before keeping the stored address.</summary>
 	private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(8);
@@ -489,7 +494,16 @@ public partial class MainPage : ContentPage
 				return;
 			}
 
+			#if IOS
+			// Received files must land in the Documents folder on iOS: UIFileSharingEnabled exposes
+			// only Documents to the Files app, while AppDataDirectory sits deeper in the sandbox
+			// where the user could never reach the file again without a computer.
+			var destination = Path.Combine(
+				Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+				"Received");
+			#else
 			var destination = Path.Combine(FileSystem.AppDataDirectory, "Received");
+			#endif
 			foreach (var transfer in transfers)
 			{
 				var accept = await DisplayAlert(
@@ -565,6 +579,18 @@ public partial class MainPage : ContentPage
 		UpdateActions();
 	}
 
+#if IOS
+	/// <summary>
+	/// iOS does not listen for the desktop's broadcast: sending or receiving UDP multicast
+	/// requires the <c>com.apple.developer.networking.multicast</c> entitlement, which Apple
+	/// grants only on a per-app request that a free personal signing identity can never carry.
+	/// The socket would bind fine and then silently never receive a datagram, so the 8-second
+	/// listen would be pure battery drain. When the desktop's address changes, iOS recovery is
+	/// the QR pairing path; see README「自动发现」and docs/安装说明.md.
+	/// </summary>
+	private static Task RefreshEndpointFromDiscoveryAsync(CoordinatorConnection connection) =>
+		Task.CompletedTask;
+#else
 	/// <summary>
 	/// Looks for the paired computer on the local network and adopts its current address.
 	/// <para>
@@ -623,6 +649,7 @@ public partial class MainPage : ContentPage
 			_discoveryRunning = false;
 		}
 	}
+#endif
 
 	private static string ShortFingerprint(string fingerprint) =>
 		fingerprint.Length > 12 ? fingerprint[..12] : fingerprint;
@@ -735,6 +762,13 @@ public partial class MainPage : ContentPage
 		CancelTransferButton.IsVisible = isBusy;
 		CancelTransferButton.IsEnabled = isBusy;
 
+#if IOS
+		// A locked screen or a backgrounded app lets iOS suspend in-flight socket transfers,
+		// which is how large files die halfway. Keep the screen awake for the duration of a
+		// transfer and hand control back to the system the moment we go idle.
+		UIApplication.SharedApplication.IdleTimerDisabled = isBusy;
+#endif
+
 		if (isBusy)
 		{
 			SendButton.IsEnabled = false;
@@ -757,6 +791,19 @@ public partial class MainPage : ContentPage
 				: $"发送 {_selectedFiles.Count} 个文件到电脑";
 		ReceiveButton.IsEnabled = _client is not null;
 	}
+
+	/// <summary>
+	/// Connect-failure messages get one iOS-specific rider: without the multicast entitlement the
+	/// phone cannot hear the desktop's auto-discovery broadcast, so a changed Wi-Fi or IP can only
+	/// be healed by pairing again. On other platforms the hint is empty.
+	/// </summary>
+#if IOS
+	private const string IosDiscoveryHint =
+		"\n\niPhone 提示：iOS 听不到电脑的自动发现广播，换 Wi-Fi 或电脑 IP 变化后需要重新扫码配对" +
+		"（电脑端「创建配对信息」）。";
+#else
+	private const string IosDiscoveryHint = "";
+#endif
 
 	/// <summary>
 	/// Pairing is the most common dead end on a phone, and the underlying exception messages are
@@ -786,8 +833,8 @@ public partial class MainPage : ContentPage
 			"请让电脑上「局域传输」保持运行，然后重新发送；电脑弹出提示后点「是」即可。",
 		TimeoutException =>
 			"电脑一直没有确认这次发送，手机已经停止等待了。\n\n" +
-			"请确认电脑上「局域传输」正在运行；弹出确认提示后尽快点「是」，然后重新发送。",
-		_ => exception.Message,
+			"请确认电脑上「局域传输」正在运行；弹出确认提示后尽快点「是」，然后重新发送。" + IosDiscoveryHint,
+		_ => exception.Message + IosDiscoveryHint,
 	};
 
 	/// <summary>
@@ -801,8 +848,8 @@ public partial class MainPage : ContentPage
 			$"（{exception.Message}）\n\n" +
 			"请清理手机存储空间后重试；接收的文件保存在应用数据目录的 Received 文件夹。",
 		TimeoutException =>
-			"等待电脑发送数据超时，连接可能已中断。\n\n请确认电脑与手机在同一个 Wi-Fi，然后重试。",
-		_ => exception.Message,
+			"等待电脑发送数据超时，连接可能已中断。\n\n请确认电脑与手机在同一个 Wi-Fi，然后重试。" + IosDiscoveryHint,
+		_ => exception.Message + IosDiscoveryHint,
 	};
 
 	private static string FormatSize(long length)

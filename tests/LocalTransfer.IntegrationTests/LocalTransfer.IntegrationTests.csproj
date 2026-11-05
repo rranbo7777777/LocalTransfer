@@ -7,7 +7,6 @@
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <GenerateProgramFile>false</GenerateProgramFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,7 +18,6 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
-    <Compile Include="..\TestProgram.cs" Link="TestProgram.cs" />
   </ItemGroup>
 
   <ItemGroup>
